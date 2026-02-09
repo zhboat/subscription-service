@@ -290,6 +290,7 @@ detect_xray() {
   fi
 
   info "检测到 Xray 配置: $config_file"
+  XRAY_CONFIG_FILE_DETECTED="$config_file"
 
   # 提取 VLESS UUID（简单方式）
   if command_exists python3; then
@@ -303,6 +304,35 @@ try:
             if clients:
                 print(clients[0].get('id', ''))
                 break
+except: pass
+" 2>/dev/null)
+
+    # 提取 VLESS inbound tags 和 ports
+    XRAY_INBOUND_TAGS_DETECTED=$(python3 -c "
+import json
+try:
+    d = json.load(open('$config_file'))
+    tags = []
+    for inbound in d.get('inbounds', []):
+        if inbound.get('protocol') == 'vless':
+            tag = inbound.get('tag', '')
+            port = inbound.get('port', '')
+            if tag and port:
+                tags.append(f'{tag}:{port}')
+    if tags:
+        print(','.join(tags))
+except: pass
+" 2>/dev/null)
+
+    # 检测 API 端口
+    XRAY_API_PORT_DETECTED=$(python3 -c "
+import json
+try:
+    d = json.load(open('$config_file'))
+    for inbound in d.get('inbounds', []):
+        if inbound.get('protocol') == 'dokodemo-door' and inbound.get('tag') == 'api':
+            print(inbound.get('port', 10085))
+            break
 except: pass
 " 2>/dev/null)
   fi
@@ -604,6 +634,18 @@ apply_node_config() {
   # 设置公开 URL
   if [ -n "${SERVER_IP:-}" ]; then
     sed -i "s|^SUB_PUBLIC_BASE_URL=.*|SUB_PUBLIC_BASE_URL=http://${SERVER_IP}:${APP_PORT}|" "$ENV_FILE"
+  fi
+
+  # Xray 动态 UUID 配置
+  if [ -n "${XRAY_INBOUND_TAGS_DETECTED:-}" ]; then
+    sed -i "s|^XRAY_INBOUND_TAGS=.*|XRAY_INBOUND_TAGS=${XRAY_INBOUND_TAGS_DETECTED}|" "$ENV_FILE"
+    info "已配置 Xray inbound tags: ${XRAY_INBOUND_TAGS_DETECTED}"
+  fi
+  if [ -n "${XRAY_API_PORT_DETECTED:-}" ]; then
+    sed -i "s|^XRAY_API_PORT=.*|XRAY_API_PORT=${XRAY_API_PORT_DETECTED}|" "$ENV_FILE"
+    sed -i "s|^XRAY_API_ADDR=.*|XRAY_API_ADDR=host.docker.internal:${XRAY_API_PORT_DETECTED}|" "$ENV_FILE"
+    # 放行 Docker 容器到 Xray API 端口
+    allow_docker_to_port "${XRAY_API_PORT_DETECTED}"
   fi
 }
 
