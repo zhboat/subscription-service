@@ -134,6 +134,7 @@ class SubscriptionMySQLClient {
     await this._addColumnIfNotExists('sub_tokens', 'one_time_use', 'BOOLEAN DEFAULT FALSE')
     await this._addColumnIfNotExists('sub_tokens', 'is_consumed', 'BOOLEAN DEFAULT FALSE')
     await this._addColumnIfNotExists('sub_tokens', 'user_id', 'VARCHAR(64) DEFAULT NULL')
+    await this._addColumnIfNotExists('sub_tokens', 'vless_uuid', 'VARCHAR(36) DEFAULT NULL')
 
     // 用户统计表
     await this.pool.execute(`
@@ -270,12 +271,13 @@ class SubscriptionMySQLClient {
       userId,
       allowedIPs,
       enabledNodes,
-      createdBy
+      createdBy,
+      vlessUuid
     } = tokenData
 
     const sql = `
-      INSERT INTO sub_tokens (id, token, name, expires_at, max_access, one_time_use, user_id, allowed_ips, enabled_nodes, created_by, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+      INSERT INTO sub_tokens (id, token, name, expires_at, max_access, one_time_use, user_id, allowed_ips, enabled_nodes, created_by, vless_uuid, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
     `
     await this.pool.execute(sql, [
       id,
@@ -287,10 +289,11 @@ class SubscriptionMySQLClient {
       userId || null,
       JSON.stringify(allowedIPs || []),
       JSON.stringify(enabledNodes || []),
-      createdBy || 'admin'
+      createdBy || 'admin',
+      vlessUuid || null
     ])
 
-    return { id, token, name, oneTimeUse }
+    return { id, token, name, oneTimeUse, vlessUuid }
   }
 
   // 获取用户关联的 Token
@@ -317,7 +320,7 @@ class SubscriptionMySQLClient {
   // 重置 Token（根据 strictMode 参数决定模式）
   // strictMode=true: 严格模式，生成新 Token 后旧 Token 立即失效
   // strictMode=false: 宽松模式，新旧 Token 并存
-  async regenerateToken(oldToken, newToken, strictMode = true) {
+  async regenerateToken(oldToken, newToken, strictMode = true, vlessUuid = null) {
     // 获取旧 token 的信息
     const oldTokenData = await this.getToken(oldToken)
     if (!oldTokenData) {
@@ -336,14 +339,9 @@ class SubscriptionMySQLClient {
         )
       }
     } else {
-      // 宽松模式：旧链接保持有效，取消阅后即焚限制
-      // 把旧 token 的 one_time_use 和 is_consumed 都重置，这样旧链接可以无限刷新
-      if (oldTokenData.userId) {
-        await this.pool.execute(
-          `UPDATE sub_tokens SET one_time_use = FALSE, is_consumed = FALSE WHERE user_id = ? AND status = 'active'`,
-          [oldTokenData.userId]
-        )
-      }
+      // 宽松模式：不 revoke 旧 token，不修改任何字段
+      // 阅后即焚链接用一次就失效（is_consumed=true），这是正确的行为
+      // 旧 token 保持 status=active，hy2/vless 认证仍然有效
     }
 
     // 创建新 token 记录
@@ -358,8 +356,8 @@ class SubscriptionMySQLClient {
     const userId = oldTokenData.userId || DEFAULT_ADMIN_USER_ID
 
     const sql = `
-      INSERT INTO sub_tokens (id, token, name, status, expires_at, max_access, one_time_use, user_id, allowed_ips, enabled_nodes, created_by, created_at)
-      VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, NOW())
+      INSERT INTO sub_tokens (id, token, name, status, expires_at, max_access, one_time_use, user_id, allowed_ips, enabled_nodes, created_by, vless_uuid, created_at)
+      VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, NOW())
     `
     await this.pool.execute(sql, [
       newTokenId,
@@ -371,7 +369,8 @@ class SubscriptionMySQLClient {
       userId,
       JSON.stringify(oldTokenData.allowedIPs || []),
       JSON.stringify(oldTokenData.enabledNodes || []),
-      oldTokenData.createdBy || 'admin'
+      oldTokenData.createdBy || 'admin',
+      vlessUuid || null
     ])
 
     return true
@@ -449,6 +448,39 @@ class SubscriptionMySQLClient {
   async listTokens() {
     const [rows] = await this.pool.execute(
       'SELECT * FROM sub_tokens ORDER BY created_at DESC'
+    )
+    return rows.map(row => this._formatToken(row))
+  }
+
+  // 为没有 vless_uuid 的 active token 补充 UUID
+  async backfillVlessUuids() {
+    const crypto = require('crypto')
+    const [rows] = await this.pool.execute(
+      "SELECT id FROM sub_tokens WHERE status = 'active' AND vless_uuid IS NULL"
+    )
+    for (const row of rows) {
+      const uuid = crypto.randomUUID()
+      await this.pool.execute(
+        'UPDATE sub_tokens SET vless_uuid = ? WHERE id = ?',
+        [uuid, row.id]
+      )
+    }
+    return rows.length
+  }
+
+  // 获取所有有 UUID 的 active token
+  async getActiveTokensWithUuid() {
+    const [rows] = await this.pool.execute(
+      "SELECT * FROM sub_tokens WHERE status = 'active' AND vless_uuid IS NOT NULL"
+    )
+    return rows.map(row => this._formatToken(row))
+  }
+
+  // 按状态查询用户的 token
+  async getTokensByUserIdAndStatus(userId, status) {
+    const [rows] = await this.pool.execute(
+      'SELECT * FROM sub_tokens WHERE user_id = ? AND status = ?',
+      [userId, status]
     )
     return rows.map(row => this._formatToken(row))
   }
@@ -633,6 +665,7 @@ class SubscriptionMySQLClient {
       userId: row.user_id || null,
       allowedIPs: this._parseJson(row.allowed_ips) || [],
       enabledNodes: this._parseJson(row.enabled_nodes) || [],
+      vlessUuid: row.vless_uuid || null,
       createdBy: row.created_by,
       lastAccessAt: row.last_access_at ? row.last_access_at.toISOString() : null,
       lastAccessIP: row.last_access_ip,

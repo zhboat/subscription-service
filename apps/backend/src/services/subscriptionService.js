@@ -6,6 +6,7 @@
 
 const crypto = require('crypto')
 const subscriptionMysql = require('../models/subscriptionMysql')
+const xrayService = require('./xrayService')
 const logger = require('../utils/logger')
 
 const DEFAULT_TOKEN_EXPIRY_DAYS = 30
@@ -111,6 +112,7 @@ class SubscriptionService {
     const tokenId = token.substring(0, 8)
     const now = new Date()
     const expiresAt = new Date(now.getTime() + expiryDays * 24 * 60 * 60 * 1000)
+    const vlessUuid = crypto.randomUUID()
 
     try {
       await subscriptionMysql.createToken({
@@ -123,7 +125,13 @@ class SubscriptionService {
         userId,
         allowedIPs,
         enabledNodes,
-        createdBy
+        createdBy,
+        vlessUuid
+      })
+
+      // 异步添加 Xray 用户（不阻塞返回）
+      xrayService.addTokenUser(tokenId, vlessUuid).catch(err => {
+        logger.error(`Failed to add Xray user for token ${tokenId}:`, err)
       })
 
       logger.info(`📋 Created subscription token: ${tokenId} (${name}), oneTimeUse: ${oneTimeUse}`)
@@ -242,18 +250,13 @@ class SubscriptionService {
       }
     }
 
-    // 获取用户当前的 subscription_token 作为 hy2 密码
-    // 这样即使通过旧订阅链接更新，hy2 密码也始终是最新的 active token
-    let hy2Password = token
-    if (data.userId) {
-      const user = await subscriptionMysql.getUserById(data.userId)
-      if (user && user.subscriptionToken) {
-        hy2Password = user.subscriptionToken
-      }
-    }
+    // hy2 密码 = URL 中的 token（每个订阅链接独立）
+    // 严格模式下旧 token 被 revoke → hy2 认证失败；宽松模式旧 token 保持 active → 认证成功
+    const hy2Password = token
+    const vlessUuid = data.vlessUuid
 
-    // 添加实际节点（传递用户当前 token 用于生成用户独立密码）
-    links.push(...nodes.map(node => this._generateNodeLink(node, hy2Password)))
+    // 添加实际节点
+    links.push(...nodes.map(node => this._generateNodeLink(node, hy2Password, vlessUuid)))
 
     // Base64 编码
     const content = Buffer.from(links.join('\n')).toString('base64')
@@ -272,12 +275,12 @@ class SubscriptionService {
    * @param {object} node - 节点配置
    * @param {string} userToken - 用户的订阅 Token（用作密码）
    */
-  _generateNodeLink(node, userToken = null) {
+  _generateNodeLink(node, userToken = null, vlessUuid = null) {
     switch (node.type) {
       case 'hysteria2':
         return this._generateHysteria2Link(node, userToken)
       case 'vless':
-        return this._generateVlessLink(node)
+        return this._generateVlessLink(node, vlessUuid)
       default:
         return ''
     }
@@ -306,8 +309,9 @@ class SubscriptionService {
   /**
    * 生成 VLESS 链接
    */
-  _generateVlessLink(node) {
+  _generateVlessLink(node, dynamicUuid = null) {
     const { config, name } = node
+    const uuid = dynamicUuid || config.uuid
     const params = new URLSearchParams({
       encryption: config.encryption,
       security: config.security,
@@ -318,7 +322,7 @@ class SubscriptionService {
       serviceName: config.serviceName,
       mode: config.mode
     })
-    return `vless://${config.uuid}@${config.server}:${config.port}?${params.toString()}#${encodeURIComponent(name)}`
+    return `vless://${uuid}@${config.server}:${config.port}?${params.toString()}#${encodeURIComponent(name)}`
   }
 
   /**
@@ -412,9 +416,17 @@ class SubscriptionService {
   async deleteToken(token) {
     await this.ensureMySQL()
 
+    // 先获取 token 数据（用于删除 Xray 用户）
+    const tokenData = await subscriptionMysql.getToken(token)
     const deleted = await subscriptionMysql.deleteToken(token)
 
     if (deleted) {
+      // 异步删除 Xray 用户
+      if (tokenData && tokenData.vlessUuid) {
+        xrayService.removeTokenUser(tokenData.id).catch(err => {
+          logger.error(`Failed to remove Xray user for token ${tokenData.id}:`, err)
+        })
+      }
       logger.info(`🗑️ Deleted subscription token: ${token.substring(0, 8)}`)
       return { success: true }
     }
@@ -436,15 +448,40 @@ class SubscriptionService {
       return { success: false, error: 'Token not found' }
     }
 
-    // 生成新 Token
+    // 生成新 Token 和新 VLESS UUID
     const newToken = this.generateToken()
+    const newVlessUuid = crypto.randomUUID()
 
     // 根据模式决定是否使旧 token 失效
     const strictMode = tokenMode === 'strict'
-    const created = await subscriptionMysql.regenerateToken(oldToken, newToken, strictMode)
+
+    // 严格模式：获取将被 revoke 的旧 token，用于删除 Xray 用户
+    let revokedTokens = []
+    if (strictMode && tokenData.userId) {
+      revokedTokens = await subscriptionMysql.getTokensByUserIdAndStatus(tokenData.userId, 'active')
+    }
+
+    const created = await subscriptionMysql.regenerateToken(oldToken, newToken, strictMode, newVlessUuid)
     if (!created) {
       return { success: false, error: 'Failed to create new token' }
     }
+
+    // 严格模式：删除被 revoke 的旧 token 的 Xray 用户
+    if (strictMode) {
+      for (const rt of revokedTokens) {
+        if (rt.vlessUuid) {
+          xrayService.removeTokenUser(rt.id).catch(err => {
+            logger.error(`Failed to remove Xray user for revoked token ${rt.id}:`, err)
+          })
+        }
+      }
+    }
+
+    // 添加新 token 的 Xray 用户
+    const newTokenId = newToken.substring(0, 8)
+    xrayService.addTokenUser(newTokenId, newVlessUuid).catch(err => {
+      logger.error(`Failed to add Xray user for new token ${newTokenId}:`, err)
+    })
 
     const modeDesc = strictMode ? '旧链接已失效' : '旧链接仍有效'
     logger.info(`🔄 Created new subscription token for user ${tokenData.userId}: ${newToken.substring(0, 8)}... (${modeDesc})`)

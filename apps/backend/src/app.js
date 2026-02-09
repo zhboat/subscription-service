@@ -8,6 +8,7 @@ const redis = require('./models/redis')
 const subscriptionRoutes = require('./routes/subscriptionRoutes')
 const trafficSyncService = require('./services/trafficSyncService')
 const hysteria2AuthService = require('./services/hysteria2AuthService')
+const xrayService = require('./services/xrayService')
 const subUserService = require('./services/subUserService')
 
 const app = express()
@@ -62,6 +63,15 @@ async function startServices() {
     }
   } else {
     logger.warn('⚠️ Hysteria2 auth service disabled')
+  }
+
+  // Xray 用户同步
+  if (process.env.XRAY_ENABLED !== 'false') {
+    xrayService.syncAllUsers().catch(err => {
+      logger.error('❌ Xray sync failed:', err)
+    })
+  } else {
+    logger.warn('⚠️ Xray service disabled')
   }
 }
 

@@ -197,10 +197,10 @@ router.post('/auth/change-password', authenticateSubUser, async (req, res) => {
 })
 
 /**
- * 获取管理员设置
+ * 获取用户设置
  * GET /sub/auth/settings
  */
-router.get('/auth/settings', authenticateSubAdmin, async (req, res) => {
+router.get('/auth/settings', authenticateSubUser, async (req, res) => {
   try {
     const user = req.subUser
     res.json({
@@ -216,10 +216,10 @@ router.get('/auth/settings', authenticateSubAdmin, async (req, res) => {
 })
 
 /**
- * 更新管理员设置
+ * 更新用户设置
  * PUT /sub/auth/settings
  */
-router.put('/auth/settings', authenticateSubAdmin, async (req, res) => {
+router.put('/auth/settings', authenticateSubUser, async (req, res) => {
   try {
     const { tokenMode } = req.body
 
@@ -232,7 +232,7 @@ router.put('/auth/settings', authenticateSubAdmin, async (req, res) => {
 
     await subUserService.updateUser(req.subUser.id, updates)
 
-    logger.info(`⚙️ Admin ${req.subUser.username} updated settings: tokenMode=${tokenMode}`)
+    logger.info(`⚙️ User ${req.subUser.username} updated settings: tokenMode=${tokenMode}`)
 
     res.json({
       success: true,
@@ -675,8 +675,8 @@ router.post('/auth/sub-users/:userId/regenerate-token', authenticateSubAdmin, as
       return res.status(400).json({ error: '用户没有关联的订阅链接' })
     }
 
-    // 使用管理员的 token_mode 配置
-    const tokenMode = req.subUser.tokenMode || 'strict'
+    // 使用下级用户自己的 token_mode 配置
+    const tokenMode = user.tokenMode || 'strict'
     const result = await subscriptionService.regenerateToken(user.subscriptionToken, tokenMode)
 
     if (!result.success) {

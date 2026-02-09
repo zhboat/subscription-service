@@ -910,9 +910,8 @@
           </div>
         </div>
 
-        <!-- 管理员设置：订阅链接模式 -->
+        <!-- 订阅链接模式设置 -->
         <div
-          v-if="subStore.isAdmin"
           class="overflow-hidden rounded-2xl border border-gray-200/50 bg-white/70 shadow-xl backdrop-blur-sm dark:border-gray-700/50 dark:bg-gray-800/70"
         >
           <div
@@ -946,7 +945,7 @@
                     <div>
                       <div class="font-medium text-gray-900 dark:text-white">严格模式</div>
                       <div class="text-sm text-gray-500 dark:text-gray-400">
-                        生成新订阅链接后，旧链接立即失效。防止订阅链接被分享。
+                        重新生成订阅链接后，旧链接立即失效。防止订阅链接被分享。
                       </div>
                     </div>
                   </label>
@@ -966,7 +965,7 @@
                     <div>
                       <div class="font-medium text-gray-900 dark:text-white">宽松模式</div>
                       <div class="text-sm text-gray-500 dark:text-gray-400">
-                        生成新订阅链接后，旧链接仍然有效。允许用户在多设备使用不同链接。
+                        重新生成订阅链接后，旧链接仍然有效。允许在多设备使用不同链接。
                       </div>
                     </div>
                   </label>
@@ -974,7 +973,7 @@
               </div>
               <p class="text-xs text-gray-500 dark:text-gray-400">
                 <i class="fas fa-info-circle mr-1"></i>
-                此设置影响您和您的下级用户重新生成订阅链接时的行为
+                此设置在下次重新生成订阅链接时生效，不会影响已有链接
               </p>
             </div>
           </div>
@@ -1589,7 +1588,6 @@ const handleResetTraffic = async (user) => {
 }
 
 const loadAdminSettings = async () => {
-  if (!subStore.isAdmin) return
   try {
     const settings = await subStore.getSettings()
     adminSettings.tokenMode = settings.tokenMode || 'strict'
