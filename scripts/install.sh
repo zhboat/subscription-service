@@ -894,7 +894,7 @@ main() {
   # 8. 从日志中提取默认管理员密码
   ADMIN_PASSWORD=""
   for i in {1..10}; do
-    ADMIN_PASSWORD=$($COMPOSE_CMD -f "$COMPOSE_FILE" logs backend 2>/dev/null | grep "Default admin password:" | tail -1 | sed 's/.*Default admin password: //')
+    ADMIN_PASSWORD=$($COMPOSE_CMD -f "$COMPOSE_FILE" logs backend 2>/dev/null | grep "Default admin password:" | tail -1 | sed 's/.*Default admin password: //' || true)
     if [ -n "$ADMIN_PASSWORD" ]; then
       break
     fi
