@@ -849,6 +849,8 @@ main() {
       HY2_CONFIGURED="false"
       VLESS_CONFIGURED="false"
       auto_sync_hy2_runtime_config
+      # 检测 Xray 配置（inbound tags、API 端口）
+      detect_xray || true
       apply_node_config
       auto_fill_placeholder_nodes_non_interactive
     else
@@ -944,6 +946,12 @@ main() {
     echo -e "  VLESS: ${GREEN}已配置${NC} (${VLESS_SERVER}:${VLESS_PORT})"
   else
     echo -e "  VLESS: ${YELLOW}未配置${NC}"
+  fi
+
+  if [ -n "${XRAY_INBOUND_TAGS_DETECTED:-}" ]; then
+    echo -e "  Xray 动态 UUID: ${GREEN}已启用${NC} (${XRAY_INBOUND_TAGS_DETECTED})"
+  else
+    echo -e "  Xray 动态 UUID: ${YELLOW}未检测到 Xray API${NC}"
   fi
 
   echo ""
