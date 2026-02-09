@@ -194,6 +194,7 @@ docker compose -f deploy/compose/docker-compose.yml --env-file .env logs --tail=
 - **Link Format**: `vless://<uuid>@<server>:<port>?encryption=none&security=tls&...`
 - **Transport Types**: gRPC, WebSocket, TCP
 - **Encryption**: TLS
+- **Dynamic UUID**: Each subscription link gets a unique UUID; in strict mode, old links' VLESS nodes are automatically revoked
 
 ## Hysteria2 Integration
 
@@ -334,7 +335,8 @@ subscription-service/
 │   │   │   │   ├── subscriptionService.js   # Subscription service
 │   │   │   │   ├── subUserService.js        # User service
 │   │   │   │   ├── trafficSyncService.js    # Traffic sync
-│   │   │   │   └── hysteria2AuthService.js  # Hysteria2 auth
+│   │   │   │   ├── hysteria2AuthService.js  # Hysteria2 auth
+│   │   │   │   └── xrayService.js           # Xray dynamic user management
 │   │   │   ├── models/       # Data models
 │   │   │   └── middleware/   # Middleware
 │   │   └── Dockerfile
@@ -396,9 +398,10 @@ A: One-time links prevent subscription link sharing. Once a user imports the sub
 
 **Q: What is the difference between strict and loose mode?**
 
-A: Admins can choose the subscription link mode in Account Settings:
-- **Strict mode** (default): When regenerating a subscription link, old links become invalid immediately. Prevents link sharing.
+A: All users can choose the subscription link mode in Account Settings:
+- **Strict mode** (default): When regenerating a subscription link, old links become invalid immediately (hy2 auth fails, VLESS UUID removed). Prevents link sharing.
 - **Loose mode**: When regenerating a subscription link, old links remain valid. Allows users to use different links on multiple devices.
+- This setting takes effect on the next subscription link regeneration and does not affect existing links.
 
 ### Installation Related
 

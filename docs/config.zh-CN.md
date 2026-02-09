@@ -154,11 +154,49 @@ auth:
     insecure: false
 ```
 
-### Xray 统计（可选）
+### Xray 动态 UUID 管理
+
+通过 Xray gRPC API 为每个订阅链接分配独立的 VLESS UUID，实现严格模式下旧链接的 VLESS 节点自动失效。
 
 | 变量 | 说明 | 默认值 | 必填 |
 |------|------|--------|------|
-| `XRAY_API_PORT` | Xray API 端口 | `10085` | 否 |
+| `XRAY_API_PORT` | Xray gRPC API 端口 | `10085` | 否 |
+| `XRAY_API_ADDR` | Xray API 地址（容器视角） | `host.docker.internal:10085` | 否 |
+| `XRAY_INBOUND_TAGS` | Xray inbound 标签与端口（`tag:port,...`） | `vless-grpc:10001,vless-ws:10002` | 否 |
+| `XRAY_ENABLED` | 是否启用 Xray 动态用户管理 | `true` | 否 |
+
+> 启用后，每个订阅 Token 会分配独立的 VLESS UUID。服务启动时自动同步所有 active token 到 Xray。需要 Xray 配置中启用 `api`、`stats`、`policy` 段。
+
+**Xray 服务端配置要求：**
+
+Xray 的 `config.json` 需要添加以下配置：
+```json
+{
+  "api": {
+    "tag": "api",
+    "services": ["HandlerService", "StatsService"]
+  },
+  "stats": {},
+  "policy": {
+    "levels": { "0": { "statsUserUplink": true, "statsUserDownlink": true } },
+    "system": { "statsInboundUplink": true, "statsInboundDownlink": true }
+  },
+  "inbounds": [
+    {
+      "tag": "api",
+      "listen": "0.0.0.0",
+      "port": 10085,
+      "protocol": "dokodemo-door",
+      "settings": { "address": "0.0.0.0" }
+    }
+  ],
+  "routing": {
+    "rules": [{ "type": "field", "inboundTag": ["api"], "outboundTag": "api" }]
+  }
+}
+```
+
+> 注意：VLESS inbound 需要添加 `tag` 字段（如 `vless-grpc`），并在 `clients` 中保留一个固定 UUID 作为 fallback。
 
 ## 完整配置示例
 
@@ -215,4 +253,10 @@ TRAFFIC_SYNC_ENABLED=true
 HY2_AUTH_PORT=9998
 HY2_AUTH_SECRET=your-auth-secret
 HY2_AUTH_ENABLED=true
+
+# Xray 动态 UUID 管理
+XRAY_API_PORT=10085
+XRAY_API_ADDR=host.docker.internal:10085
+XRAY_INBOUND_TAGS=vless-grpc:10001,vless-ws:10002
+XRAY_ENABLED=true
 ```

@@ -55,5 +55,10 @@ VLESS gRPC:
 - `HY2_AUTH_SECRET`
 - `HY2_AUTH_ENABLED`
 
-## Xray
-- `XRAY_API_PORT`
+## Xray Dynamic UUID Management
+- `XRAY_API_PORT`: Xray gRPC API port (default `10085`)
+- `XRAY_API_ADDR`: Xray API address from container (default `host.docker.internal:10085`)
+- `XRAY_INBOUND_TAGS`: Inbound tags with ports, e.g. `vless-grpc:10001,vless-ws:10002`
+- `XRAY_ENABLED`: Enable dynamic VLESS user management (default `true`)
+
+> When enabled, each subscription token gets a unique VLESS UUID. The service dynamically adds/removes users via Xray's gRPC API.
