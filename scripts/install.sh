@@ -503,19 +503,22 @@ configure_docker_mirror() {
 
   # 国内可用的镜像加速源列表（按优先级排序）
   local mirrors=(
-    "https://registry.cn-hangzhou.aliyuncs.com"
     "https://docker.1ms.run"
-    "https://docker.xuanyuan.me"
-    "https://docker.rainbond.cc"
+    "https://docker.m.daocloud.io"
+    "https://proxy.vvvv.ee"
+    "https://hub.rat.dev"
+    "https://docker.1panel.live"
   )
 
-  # 测试可用的镜像源
+  # 测试可用的镜像源（HTTP 200/401/302 都算可达，只要不超时/连接失败）
   local working_mirrors=()
   for mirror in "${mirrors[@]}"; do
-    if curl -sf --connect-timeout 5 --max-time 10 "${mirror}/v2/" >/dev/null 2>&1; then
+    local http_code
+    http_code=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 --max-time 10 "${mirror}/v2/" 2>/dev/null || echo "000")
+    if [ "$http_code" != "000" ] && [ "$http_code" != "403" ]; then
       working_mirrors+=("\"${mirror}\"")
-      success "镜像源可用: ${mirror}"
-      if [ ${#working_mirrors[@]} -ge 2 ]; then
+      success "镜像源可用: ${mirror} (HTTP ${http_code})"
+      if [ ${#working_mirrors[@]} -ge 3 ]; then
         break
       fi
     fi
