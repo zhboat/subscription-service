@@ -610,10 +610,44 @@ ensure_docker_running() {
   if docker info >/dev/null 2>&1; then
     success "Docker 服务已启动"
     return 0
-  else
-    error "Docker 服务启动失败，请手动检查: systemctl status docker"
-    return 1
   fi
+
+  # Docker 启动失败，尝试排查 daemon.json 问题
+  local daemon_json="/etc/docker/daemon.json"
+  if [ -f "$daemon_json" ]; then
+    # 检查 JSON 格式是否合法
+    local json_valid="true"
+    if command_exists python3; then
+      python3 -c "import json; json.load(open('$daemon_json'))" 2>/dev/null || json_valid="false"
+    fi
+
+    if [ "$json_valid" = "false" ]; then
+      warn "检测到 $daemon_json 格式错误，自动移除并重试..."
+      mv "$daemon_json" "${daemon_json}.broken"
+    else
+      # JSON 格式正确但 Docker 仍启动失败，可能是配置内容有误
+      warn "Docker 启动失败，临时移除 $daemon_json 重试..."
+      mv "$daemon_json" "${daemon_json}.bak"
+    fi
+
+    # 重置 systemd 失败计数后重试
+    systemctl reset-failed docker 2>/dev/null || true
+    systemctl start docker 2>/dev/null || true
+
+    wait_count=0
+    while ! docker info >/dev/null 2>&1 && [ $wait_count -lt 15 ]; do
+      sleep 1
+      wait_count=$((wait_count + 1))
+    done
+
+    if docker info >/dev/null 2>&1; then
+      success "移除异常 daemon.json 后 Docker 已恢复"
+      return 0
+    fi
+  fi
+
+  error "Docker 服务启动失败，请手动检查: systemctl status docker"
+  return 1
 }
 
 # 检查 Docker 版本
