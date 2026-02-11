@@ -503,10 +503,10 @@ configure_docker_mirror() {
 
   # 国内可用的镜像加速源列表（按优先级排序）
   local mirrors=(
+    "https://registry.cn-hangzhou.aliyuncs.com"
     "https://docker.1ms.run"
     "https://docker.xuanyuan.me"
     "https://docker.rainbond.cc"
-    "https://do.nark.eu.org"
   )
 
   # 测试可用的镜像源
@@ -528,6 +528,10 @@ configure_docker_mirror() {
       prompt "请输入自定义 Docker 镜像加速地址（留空跳过）: "
       read -r CUSTOM_MIRROR
       if [ -n "$CUSTOM_MIRROR" ]; then
+        # 自动补全 https:// 前缀
+        if [[ "$CUSTOM_MIRROR" != http://* ]] && [[ "$CUSTOM_MIRROR" != https://* ]]; then
+          CUSTOM_MIRROR="https://${CUSTOM_MIRROR}"
+        fi
         working_mirrors+=("\"${CUSTOM_MIRROR}\"")
       fi
     fi
@@ -569,16 +573,20 @@ with open('$daemon_json', 'w') as f:
 
   # 重启 Docker 使配置生效
   info "重启 Docker 服务使镜像加速生效..."
-  if systemctl restart docker 2>/dev/null; then
+  systemctl restart docker 2>/dev/null || true
+
+  # 等待 Docker 就绪
+  local wait_count=0
+  while ! docker info >/dev/null 2>&1 && [ $wait_count -lt 30 ]; do
+    sleep 1
+    wait_count=$((wait_count + 1))
+  done
+
+  if docker info >/dev/null 2>&1; then
     success "Docker 已重启，镜像加速器配置完成"
-    # 等待 Docker 就绪
-    local wait_count=0
-    while ! docker info >/dev/null 2>&1 && [ $wait_count -lt 15 ]; do
-      sleep 1
-      wait_count=$((wait_count + 1))
-    done
   else
-    warn "Docker 重启失败，请手动重启: systemctl restart docker"
+    error "Docker 重启后未能就绪，请手动检查: systemctl status docker"
+    exit 1
   fi
 
   return 0
