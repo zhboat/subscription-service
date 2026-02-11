@@ -637,6 +637,41 @@ with open('$daemon_json', 'w') as f:
     exit 1
   fi
 
+  # 检测容器内 DNS 是否正常（build 时需要解析 npm 镜像域名）
+  info "检测容器内网络..."
+  if ! docker run --rm node:18-alpine sh -c "wget -q -O /dev/null --timeout=5 https://registry.npmmirror.com/ 2>/dev/null" 2>/dev/null; then
+    warn "容器内无法访问网络，配置 Docker DNS..."
+    local daemon_json="/etc/docker/daemon.json"
+    if command_exists python3; then
+      python3 -c "
+import json
+try:
+    with open('$daemon_json') as f:
+        cfg = json.load(f)
+except:
+    cfg = {}
+cfg['dns'] = ['8.8.8.8', '223.5.5.5', '114.114.114.114']
+with open('$daemon_json', 'w') as f:
+    json.dump(cfg, f, indent=2)
+" 2>/dev/null
+    fi
+
+    systemctl restart docker 2>/dev/null || true
+    local wait_count=0
+    while ! docker info >/dev/null 2>&1 && [ $wait_count -lt 15 ]; do
+      sleep 1
+      wait_count=$((wait_count + 1))
+    done
+
+    if docker run --rm node:18-alpine sh -c "wget -q -O /dev/null --timeout=5 https://registry.npmmirror.com/ 2>/dev/null" 2>/dev/null; then
+      success "容器内网络已恢复（DNS 已配置）"
+    else
+      warn "容器内网络仍不可用，Docker build 可能会失败"
+    fi
+  else
+    success "容器内网络正常"
+  fi
+
   return 0
 }
 
