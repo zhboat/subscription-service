@@ -511,12 +511,17 @@ configure_mirrors() {
     local current_npm
     current_npm=$(grep -E '^NPM_REGISTRY=' "$ENV_FILE" | head -n1 | cut -d= -f2- || true)
     if [ -z "$current_npm" ] || [ "$current_npm" = "https://registry.npmjs.org" ]; then
-      if grep -q '^NPM_REGISTRY=' "$ENV_FILE" 2>/dev/null; then
-        sed -i "s|^NPM_REGISTRY=.*|NPM_REGISTRY=https://registry.npmmirror.com|" "$ENV_FILE"
+      # 测试淘宝镜像是否可达
+      if curl -sf --connect-timeout 5 --max-time 10 "https://registry.npmmirror.com/" >/dev/null 2>&1; then
+        if grep -q '^NPM_REGISTRY=' "$ENV_FILE" 2>/dev/null; then
+          sed -i "s|^NPM_REGISTRY=.*|NPM_REGISTRY=https://registry.npmmirror.com|" "$ENV_FILE"
+        else
+          echo "NPM_REGISTRY=https://registry.npmmirror.com" >> "$ENV_FILE"
+        fi
+        success "已配置 npm 镜像: registry.npmmirror.com"
       else
-        echo "NPM_REGISTRY=https://registry.npmmirror.com" >> "$ENV_FILE"
+        warn "淘宝 npm 镜像不可达，npm install 可能会失败"
       fi
-      success "已配置 npm 镜像: registry.npmmirror.com"
     fi
 
     # === 2. GitHub 代理 ===
