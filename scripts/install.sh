@@ -592,10 +592,38 @@ with open('$daemon_json', 'w') as f:
   return 0
 }
 
+# 确保 Docker 服务正在运行
+ensure_docker_running() {
+  if docker info >/dev/null 2>&1; then
+    return 0
+  fi
+
+  info "启动 Docker 服务..."
+  systemctl start docker 2>/dev/null || true
+
+  local wait_count=0
+  while ! docker info >/dev/null 2>&1 && [ $wait_count -lt 15 ]; do
+    sleep 1
+    wait_count=$((wait_count + 1))
+  done
+
+  if docker info >/dev/null 2>&1; then
+    success "Docker 服务已启动"
+    return 0
+  else
+    error "Docker 服务启动失败，请手动检查: systemctl status docker"
+    return 1
+  fi
+}
+
 # 检查 Docker 版本
 check_docker_version() {
+  ensure_docker_running || return 1
+
   local version
-  version=$(docker version --format '{{.Server.Version}}' 2>/dev/null || echo "0.0.0")
+  # 优先取 Server 版本，取不到则用 Client 版本
+  version=$(docker version --format '{{.Server.Version}}' 2>/dev/null || \
+            docker version --format '{{.Client.Version}}' 2>/dev/null || echo "0.0.0")
   local major minor
   major=$(echo "$version" | cut -d. -f1)
   minor=$(echo "$version" | cut -d. -f2)
