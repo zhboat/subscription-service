@@ -13,7 +13,10 @@ RUN apk add --no-cache wget unzip \
 WORKDIR /app
 
 COPY package.json ./
-RUN npm install --omit=dev --registry=${NPM_REGISTRY}
+RUN if [ "$NPM_REGISTRY" != "https://registry.npmjs.org" ]; then \
+      npm config set registry ${NPM_REGISTRY}; \
+    fi \
+    && npm install --omit=dev
 
 COPY src ./src
 COPY config ./config

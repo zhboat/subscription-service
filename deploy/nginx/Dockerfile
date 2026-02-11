@@ -7,7 +7,10 @@ ARG NPM_REGISTRY=https://registry.npmjs.org
 WORKDIR /app
 
 COPY apps/frontend/package.json ./
-RUN npm install --registry=${NPM_REGISTRY}
+RUN if [ "$NPM_REGISTRY" != "https://registry.npmjs.org" ]; then \
+      npm config set registry ${NPM_REGISTRY}; \
+    fi \
+    && npm install
 
 COPY apps/frontend ./
 RUN VITE_APP_BASE_URL=${VITE_APP_BASE_URL} VITE_API_BASE_URL=${VITE_API_BASE_URL} npm run build
