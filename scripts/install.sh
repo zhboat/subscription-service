@@ -340,6 +340,250 @@ except: pass
   return 0
 }
 
+# 检测操作系统类型
+detect_os() {
+  if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS_ID="${ID}"
+    OS_VERSION="${VERSION_ID}"
+  elif command_exists lsb_release; then
+    OS_ID=$(lsb_release -si | tr '[:upper:]' '[:lower:]')
+    OS_VERSION=$(lsb_release -sr)
+  else
+    OS_ID="unknown"
+    OS_VERSION=""
+  fi
+}
+
+# 安装 Docker
+install_docker() {
+  info "开始安装 Docker..."
+
+  detect_os
+
+  case "$OS_ID" in
+    ubuntu|debian)
+      info "检测到 ${OS_ID}，使用官方脚本安装 Docker..."
+
+      # 安装前置依赖
+      apt-get update -qq >/dev/null 2>&1
+      apt-get install -y -qq ca-certificates curl gnupg >/dev/null 2>&1
+
+      # 下载 Docker 官方安装脚本（优先官方源，失败则用国内镜像）
+      local get_docker_ok="false"
+      if curl -fsSL https://get.docker.com -o /tmp/get-docker.sh 2>/dev/null; then
+        get_docker_ok="true"
+      else
+        warn "Docker 官方脚本下载失败，尝试使用国内镜像..."
+        if curl -fsSL https://mirrors.aliyun.com/docker-ce/linux/get-docker.sh -o /tmp/get-docker.sh 2>/dev/null; then
+          get_docker_ok="true"
+        fi
+      fi
+
+      if [ "$get_docker_ok" != "true" ]; then
+        error "Docker 安装脚本下载失败，请检查网络连接"
+        exit 1
+      fi
+
+      # 执行安装脚本
+      if ! sh /tmp/get-docker.sh; then
+        rm -f /tmp/get-docker.sh
+        error "Docker 安装失败，请手动安装: https://docs.docker.com/engine/install/"
+        exit 1
+      fi
+      rm -f /tmp/get-docker.sh
+      ;;
+    centos|rhel|fedora|rocky|almalinux)
+      info "检测到 ${OS_ID}，使用官方脚本安装 Docker..."
+      local get_docker_ok="false"
+      if curl -fsSL https://get.docker.com -o /tmp/get-docker.sh 2>/dev/null; then
+        get_docker_ok="true"
+      elif curl -fsSL https://mirrors.aliyun.com/docker-ce/linux/get-docker.sh -o /tmp/get-docker.sh 2>/dev/null; then
+        get_docker_ok="true"
+      fi
+
+      if [ "$get_docker_ok" != "true" ]; then
+        error "Docker 安装脚本下载失败，请检查网络连接"
+        exit 1
+      fi
+
+      if ! sh /tmp/get-docker.sh; then
+        rm -f /tmp/get-docker.sh
+        error "Docker 安装失败，请手动安装: https://docs.docker.com/engine/install/"
+        exit 1
+      fi
+      rm -f /tmp/get-docker.sh
+      ;;
+    *)
+      error "不支持自动安装 Docker 的系统: ${OS_ID}"
+      error "请手动安装 Docker: https://docs.docker.com/engine/install/"
+      exit 1
+      ;;
+  esac
+
+  # 启动并设置开机自启
+  systemctl start docker 2>/dev/null || true
+  systemctl enable docker 2>/dev/null || true
+
+  # 验证安装
+  if command_exists docker; then
+    success "Docker 安装成功: $(docker --version)"
+  else
+    error "Docker 安装失败，请手动安装: https://docs.docker.com/engine/install/"
+    exit 1
+  fi
+}
+
+# 安装 Docker Compose 插件
+install_docker_compose() {
+  info "开始安装 Docker Compose 插件..."
+
+  detect_os
+
+  case "$OS_ID" in
+    ubuntu|debian)
+      apt-get update -qq >/dev/null 2>&1
+      apt-get install -y -qq docker-compose-plugin >/dev/null 2>&1 || true
+      ;;
+    centos|rhel|fedora|rocky|almalinux)
+      if command_exists dnf; then
+        dnf install -y -q docker-compose-plugin >/dev/null 2>&1 || true
+      else
+        yum install -y -q docker-compose-plugin >/dev/null 2>&1 || true
+      fi
+      ;;
+    *)
+      warn "无法通过包管理器安装，尝试手动下载..."
+      ;;
+  esac
+
+  # 如果包管理器安装失败，从 GitHub 下载
+  if ! docker compose version >/dev/null 2>&1; then
+    info "从 GitHub 下载 Docker Compose..."
+    local arch
+    arch=$(uname -m)
+    case "$arch" in
+      x86_64)  arch="x86_64" ;;
+      aarch64) arch="aarch64" ;;
+      armv7l)  arch="armv7" ;;
+      *) error "不支持的架构: $arch"; exit 1 ;;
+    esac
+
+    local compose_url="https://github.com/docker/compose/releases/latest/download/docker-compose-linux-${arch}"
+    local plugin_dir="/usr/local/lib/docker/cli-plugins"
+    mkdir -p "$plugin_dir"
+
+    if curl -fsSL "$compose_url" -o "${plugin_dir}/docker-compose"; then
+      chmod +x "${plugin_dir}/docker-compose"
+    else
+      error "Docker Compose 下载失败，请检查网络连接"
+      exit 1
+    fi
+  fi
+
+  if docker compose version >/dev/null 2>&1; then
+    success "Docker Compose 安装成功: $(docker compose version --short)"
+  else
+    error "Docker Compose 安装失败"
+    exit 1
+  fi
+}
+
+# 检测并配置 Docker 镜像加速器（解决国内无法访问 Docker Hub 的问题）
+configure_docker_mirror() {
+  info "检测 Docker Hub 连通性..."
+
+  # 尝试访问 Docker Hub registry（用 curl 检测，比 docker pull 快得多）
+  if curl -sf --connect-timeout 5 --max-time 10 "https://registry-1.docker.io/v2/" >/dev/null 2>&1; then
+    success "Docker Hub 可正常访问"
+    return 0
+  fi
+
+  warn "无法访问 Docker Hub，尝试配置镜像加速器..."
+
+  # 国内可用的镜像加速源列表（按优先级排序）
+  local mirrors=(
+    "https://docker.1ms.run"
+    "https://docker.xuanyuan.me"
+    "https://docker.rainbond.cc"
+    "https://do.nark.eu.org"
+  )
+
+  # 测试可用的镜像源
+  local working_mirrors=()
+  for mirror in "${mirrors[@]}"; do
+    if curl -sf --connect-timeout 5 --max-time 10 "${mirror}/v2/" >/dev/null 2>&1; then
+      working_mirrors+=("\"${mirror}\"")
+      success "镜像源可用: ${mirror}"
+      if [ ${#working_mirrors[@]} -ge 2 ]; then
+        break
+      fi
+    fi
+  done
+
+  if [ ${#working_mirrors[@]} -eq 0 ]; then
+    warn "未找到可用的镜像加速源"
+    if [ "$NON_INTERACTIVE" != "true" ]; then
+      echo ""
+      prompt "请输入自定义 Docker 镜像加速地址（留空跳过）: "
+      read -r CUSTOM_MIRROR
+      if [ -n "$CUSTOM_MIRROR" ]; then
+        working_mirrors+=("\"${CUSTOM_MIRROR}\"")
+      fi
+    fi
+  fi
+
+  if [ ${#working_mirrors[@]} -eq 0 ]; then
+    warn "未配置镜像加速器，拉取镜像可能会失败"
+    return 1
+  fi
+
+  # 生成 registry-mirrors JSON 数组
+  local mirrors_json
+  mirrors_json=$(IFS=,; echo "${working_mirrors[*]}")
+
+  # 写入或合并 /etc/docker/daemon.json
+  local daemon_json="/etc/docker/daemon.json"
+  if [ -f "$daemon_json" ]; then
+    # 已有配置文件，用 python3 或手动合并
+    if command_exists python3; then
+      python3 -c "
+import json, sys
+try:
+    with open('$daemon_json') as f:
+        cfg = json.load(f)
+except:
+    cfg = {}
+cfg['registry-mirrors'] = [${mirrors_json}]
+with open('$daemon_json', 'w') as f:
+    json.dump(cfg, f, indent=2)
+" 2>/dev/null
+    else
+      # 备份并覆盖
+      cp "$daemon_json" "${daemon_json}.bak"
+      echo "{\"registry-mirrors\": [${mirrors_json}]}" > "$daemon_json"
+    fi
+  else
+    echo "{\"registry-mirrors\": [${mirrors_json}]}" > "$daemon_json"
+  fi
+
+  # 重启 Docker 使配置生效
+  info "重启 Docker 服务使镜像加速生效..."
+  if systemctl restart docker 2>/dev/null; then
+    success "Docker 已重启，镜像加速器配置完成"
+    # 等待 Docker 就绪
+    local wait_count=0
+    while ! docker info >/dev/null 2>&1 && [ $wait_count -lt 15 ]; do
+      sleep 1
+      wait_count=$((wait_count + 1))
+    done
+  else
+    warn "Docker 重启失败，请手动重启: systemctl restart docker"
+  fi
+
+  return 0
+}
+
 # 检查 Docker 版本
 check_docker_version() {
   local version
@@ -756,15 +1000,28 @@ main() {
   echo -e "${BLUE}========================================${NC}"
   echo ""
 
-  # 1. 检查 Docker
+  # 1. 检查 Docker（未安装则提示安装）
   info "检查 Docker 环境..."
   if ! command_exists docker; then
-    error "Docker 未安装。请先安装 Docker: https://docs.docker.com/engine/install/"
-    exit 1
+    if [ "$NON_INTERACTIVE" = "true" ]; then
+      info "非交互模式: Docker 未安装，自动安装..."
+      install_docker
+    else
+      warn "Docker 未安装"
+      prompt "是否自动安装 Docker? (Y/n): "
+      read -r INSTALL_DOCKER
+      INSTALL_DOCKER=${INSTALL_DOCKER:-Y}
+      if [[ "$INSTALL_DOCKER" =~ ^[Yy]$ ]]; then
+        install_docker
+      else
+        error "Docker 是必需的，请手动安装后重新运行: https://docs.docker.com/engine/install/"
+        exit 1
+      fi
+    fi
   fi
   check_docker_version || exit 1
 
-  # 2. 检查 Docker Compose
+  # 2. 检查 Docker Compose（未安装则提示安装）
   info "检查 Docker Compose..."
   if docker compose version >/dev/null 2>&1; then
     COMPOSE_CMD="docker compose"
@@ -773,8 +1030,29 @@ main() {
     COMPOSE_CMD="docker-compose"
     success "Docker Compose (独立): $(docker-compose version --short)"
   else
-    error "Docker Compose 未安装。请安装 docker-compose-plugin 或 docker-compose"
-    exit 1
+    if [ "$NON_INTERACTIVE" = "true" ]; then
+      info "非交互模式: Docker Compose 未安装，自动安装..."
+      install_docker_compose
+    else
+      warn "Docker Compose 未安装"
+      prompt "是否自动安装 Docker Compose 插件? (Y/n): "
+      read -r INSTALL_COMPOSE
+      INSTALL_COMPOSE=${INSTALL_COMPOSE:-Y}
+      if [[ "$INSTALL_COMPOSE" =~ ^[Yy]$ ]]; then
+        install_docker_compose
+      else
+        error "Docker Compose 是必需的，请手动安装后重新运行"
+        exit 1
+      fi
+    fi
+    # 再次检测
+    if docker compose version >/dev/null 2>&1; then
+      COMPOSE_CMD="docker compose"
+      success "Docker Compose (插件): $(docker compose version --short)"
+    else
+      error "Docker Compose 安装失败，请手动安装"
+      exit 1
+    fi
   fi
 
   # 3. 检查端口
@@ -861,7 +1139,11 @@ main() {
 
   restart_hysteria_service_if_needed
 
-  # 6. 构建并启动服务
+  # 6. 检测 Docker Hub 连通性并配置镜像加速
+  echo ""
+  configure_docker_mirror
+
+  # 7. 构建并启动服务
   echo ""
   info "构建并启动服务..."
   cd "$ROOT_DIR"
@@ -872,7 +1154,7 @@ main() {
   # 构建并启动
   $COMPOSE_CMD -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d --build
 
-  # 7. 等待服务就绪
+  # 8. 等待服务就绪
   echo ""
   info "等待服务启动..."
   sleep 5
@@ -891,7 +1173,7 @@ main() {
     warn "后端服务可能仍在初始化，请稍后检查"
   }
 
-  # 8. 从日志中提取默认管理员密码
+  # 9. 从日志中提取默认管理员密码
   ADMIN_PASSWORD=""
   for i in {1..10}; do
     ADMIN_PASSWORD=$($COMPOSE_CMD -f "$COMPOSE_FILE" logs backend 2>/dev/null | grep "Default admin password:" | tail -1 | sed 's/.*Default admin password: //' || true)
@@ -901,13 +1183,13 @@ main() {
     sleep 1
   done
 
-  # 9. 获取服务器 IP（如果之前没获取）
+  # 10. 获取服务器 IP（如果之前没获取）
   if [ -z "${SERVER_IP:-}" ]; then
     SERVER_IP=$(get_public_ip)
     SERVER_IP=${SERVER_IP:-"YOUR_SERVER_IP"}
   fi
 
-  # 10. 打印成功信息
+  # 11. 打印成功信息
   echo ""
   echo -e "${GREEN}========================================${NC}"
   echo -e "${GREEN}   安装完成！${NC}"
