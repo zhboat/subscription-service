@@ -489,17 +489,57 @@ install_docker_compose() {
   fi
 }
 
-# 检测并配置 Docker 镜像加速器（解决国内无法访问 Docker Hub 的问题）
-configure_docker_mirror() {
-  info "检测 Docker Hub 连通性..."
+# 检测国际网络连通性，配置 Docker 镜像加速 / npm 镜像 / GitHub 代理
+configure_mirrors() {
+  info "检测国际网络连通性..."
 
-  # 尝试访问 Docker Hub registry（用 curl 检测，比 docker pull 快得多）
+  # 检测是否能访问国际网络
+  local international_ok="false"
   if curl -sf --connect-timeout 5 --max-time 10 "https://registry-1.docker.io/v2/" >/dev/null 2>&1; then
-    success "Docker Hub 可正常访问"
+    international_ok="true"
+  fi
+
+  if [ "$international_ok" = "true" ]; then
+    success "国际网络可正常访问"
     return 0
   fi
 
-  warn "无法访问 Docker Hub，尝试配置镜像加速器..."
+  warn "国际网络不可达，配置国内镜像源..."
+
+  # === 1. npm 镜像 ===
+  if [ -f "$ENV_FILE" ]; then
+    local current_npm
+    current_npm=$(grep -E '^NPM_REGISTRY=' "$ENV_FILE" | head -n1 | cut -d= -f2-)
+    if [ -z "$current_npm" ] || [ "$current_npm" = "https://registry.npmjs.org" ]; then
+      if grep -q '^NPM_REGISTRY=' "$ENV_FILE"; then
+        sed -i "s|^NPM_REGISTRY=.*|NPM_REGISTRY=https://registry.npmmirror.com|" "$ENV_FILE"
+      else
+        echo "NPM_REGISTRY=https://registry.npmmirror.com" >> "$ENV_FILE"
+      fi
+      success "已配置 npm 镜像: registry.npmmirror.com"
+    fi
+
+    # === 2. GitHub 代理 ===
+    local current_ghproxy
+    current_ghproxy=$(grep -E '^GITHUB_PROXY=' "$ENV_FILE" | head -n1 | cut -d= -f2-)
+    if [ -z "$current_ghproxy" ]; then
+      # 测试可用的 GitHub 代理
+      local gh_proxies=("https://ghfast.top/" "https://gh-proxy.com/" "https://ghproxy.cc/")
+      for proxy in "${gh_proxies[@]}"; do
+        if curl -sf --connect-timeout 5 --max-time 10 "${proxy}https://github.com" >/dev/null 2>&1; then
+          if grep -q '^GITHUB_PROXY=' "$ENV_FILE"; then
+            sed -i "s|^GITHUB_PROXY=.*|GITHUB_PROXY=${proxy}|" "$ENV_FILE"
+          else
+            echo "GITHUB_PROXY=${proxy}" >> "$ENV_FILE"
+          fi
+          success "已配置 GitHub 代理: ${proxy}"
+          break
+        fi
+      done
+    fi
+  fi
+
+  # === 3. Docker 镜像加速 ===
 
   # 国内可用的镜像加速源列表（按优先级排序）
   local mirrors=(
@@ -1212,9 +1252,9 @@ main() {
 
   restart_hysteria_service_if_needed
 
-  # 6. 检测 Docker Hub 连通性并配置镜像加速
+  # 6. 检测国际网络连通性并配置镜像加速
   echo ""
-  configure_docker_mirror
+  configure_mirrors
 
   # 7. 构建并启动服务
   echo ""

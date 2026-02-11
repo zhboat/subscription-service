@@ -1,7 +1,10 @@
 FROM node:18-alpine
 
+ARG NPM_REGISTRY=https://registry.npmjs.org
+ARG GITHUB_PROXY=
+
 RUN apk add --no-cache wget unzip \
-    && wget -qO /tmp/xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip \
+    && wget -qO /tmp/xray.zip ${GITHUB_PROXY}https://github.com/XTLS/Xray-core/releases/latest/download/Xray-linux-64.zip \
     && unzip -o /tmp/xray.zip xray -d /usr/local/bin/ \
     && chmod +x /usr/local/bin/xray \
     && rm /tmp/xray.zip \
@@ -10,7 +13,7 @@ RUN apk add --no-cache wget unzip \
 WORKDIR /app
 
 COPY package.json ./
-RUN npm install --omit=dev
+RUN npm install --omit=dev --registry=${NPM_REGISTRY}
 
 COPY src ./src
 COPY config ./config
