@@ -639,7 +639,17 @@ with open('$daemon_json', 'w') as f:
 
   # 检测容器内 DNS 是否正常（build 时需要解析 npm 镜像域名）
   info "检测容器内网络..."
-  if ! docker run --rm node:18-alpine sh -c "wget -q -O /dev/null --timeout=5 https://registry.npmmirror.com/ 2>/dev/null" 2>/dev/null; then
+  # 用 alpine 镜像检测（体积小，拉取快）
+  local test_image="alpine"
+  local test_url="https://registry.npmmirror.com/"
+  # 如果用了国内镜像源，检测国内地址；否则检测 npmjs.org
+  local current_npm
+  current_npm=$(grep -E '^NPM_REGISTRY=' "$ENV_FILE" 2>/dev/null | head -n1 | cut -d= -f2- || true)
+  if [ -n "$current_npm" ] && [ "$current_npm" != "https://registry.npmjs.org" ]; then
+    test_url="${current_npm}/"
+  fi
+
+  if ! docker run --rm "$test_image" sh -c "wget -q -O /dev/null --timeout=10 '${test_url}'" 2>/dev/null; then
     warn "容器内无法访问网络，配置 Docker DNS..."
     local daemon_json="/etc/docker/daemon.json"
     if command_exists python3; then
@@ -650,7 +660,7 @@ try:
         cfg = json.load(f)
 except:
     cfg = {}
-cfg['dns'] = ['8.8.8.8', '223.5.5.5', '114.114.114.114']
+cfg['dns'] = ['223.5.5.5', '114.114.114.114', '8.8.8.8']
 with open('$daemon_json', 'w') as f:
     json.dump(cfg, f, indent=2)
 " 2>/dev/null
@@ -663,7 +673,7 @@ with open('$daemon_json', 'w') as f:
       wait_count=$((wait_count + 1))
     done
 
-    if docker run --rm node:18-alpine sh -c "wget -q -O /dev/null --timeout=5 https://registry.npmmirror.com/ 2>/dev/null" 2>/dev/null; then
+    if docker run --rm "$test_image" sh -c "wget -q -O /dev/null --timeout=10 '${test_url}'" 2>/dev/null; then
       success "容器内网络已恢复（DNS 已配置）"
     else
       warn "容器内网络仍不可用，Docker build 可能会失败"
