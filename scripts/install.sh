@@ -509,9 +509,9 @@ configure_mirrors() {
   # === 1. npm 镜像 ===
   if [ -f "$ENV_FILE" ]; then
     local current_npm
-    current_npm=$(grep -E '^NPM_REGISTRY=' "$ENV_FILE" | head -n1 | cut -d= -f2-)
+    current_npm=$(grep -E '^NPM_REGISTRY=' "$ENV_FILE" | head -n1 | cut -d= -f2- || true)
     if [ -z "$current_npm" ] || [ "$current_npm" = "https://registry.npmjs.org" ]; then
-      if grep -q '^NPM_REGISTRY=' "$ENV_FILE"; then
+      if grep -q '^NPM_REGISTRY=' "$ENV_FILE" 2>/dev/null; then
         sed -i "s|^NPM_REGISTRY=.*|NPM_REGISTRY=https://registry.npmmirror.com|" "$ENV_FILE"
       else
         echo "NPM_REGISTRY=https://registry.npmmirror.com" >> "$ENV_FILE"
@@ -521,13 +521,13 @@ configure_mirrors() {
 
     # === 2. GitHub 代理 ===
     local current_ghproxy
-    current_ghproxy=$(grep -E '^GITHUB_PROXY=' "$ENV_FILE" | head -n1 | cut -d= -f2-)
+    current_ghproxy=$(grep -E '^GITHUB_PROXY=' "$ENV_FILE" | head -n1 | cut -d= -f2- || true)
     if [ -z "$current_ghproxy" ]; then
       # 测试可用的 GitHub 代理
       local gh_proxies=("https://ghfast.top/" "https://gh-proxy.com/" "https://ghproxy.cc/")
       for proxy in "${gh_proxies[@]}"; do
         if curl -sf --connect-timeout 5 --max-time 10 "${proxy}https://github.com" >/dev/null 2>&1; then
-          if grep -q '^GITHUB_PROXY=' "$ENV_FILE"; then
+          if grep -q '^GITHUB_PROXY=' "$ENV_FILE" 2>/dev/null; then
             sed -i "s|^GITHUB_PROXY=.*|GITHUB_PROXY=${proxy}|" "$ENV_FILE"
           else
             echo "GITHUB_PROXY=${proxy}" >> "$ENV_FILE"
