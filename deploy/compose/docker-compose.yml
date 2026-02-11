@@ -3,6 +3,7 @@ services:
     build:
       context: ../../apps/backend
       dockerfile: Dockerfile
+      network: host
       args:
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
         GITHUB_PROXY: ${GITHUB_PROXY:-}
@@ -31,6 +32,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/nginx/Dockerfile
+      network: host
       args:
         NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
     env_file:
