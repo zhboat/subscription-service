@@ -4,12 +4,25 @@
  * 数据存储：MySQL（持久化）
  */
 
+const fs = require('fs')
+const path = require('path')
 const crypto = require('crypto')
 const subscriptionMysql = require('../models/subscriptionMysql')
 const xrayService = require('./xrayService')
 const logger = require('../utils/logger')
 
 const DEFAULT_TOKEN_EXPIRY_DAYS = 30
+const MIHOMO_TEMPLATE = fs.readFileSync(path.join(__dirname, '../templates/ohyes.mihomo.yaml'), 'utf8')
+const MIHOMO_MIN_TEMPLATE = fs.readFileSync(path.join(__dirname, '../templates/ohyes.mihomo.min.yaml'), 'utf8')
+const MIHOMO_LITE_TEMPLATE = fs.readFileSync(path.join(__dirname, '../templates/ohyes.mihomo.lite.yaml'), 'utf8')
+const MIHOMO_LITE_PRIVATE_TEMPLATE = fs.readFileSync(path.join(__dirname, '../templates/ohyes.mihomo.lite.private.yaml'), 'utf8')
+const MIHOMO_LITE_PRIVATE_DNS_TEMPLATE = fs.readFileSync(path.join(__dirname, '../templates/ohyes.mihomo.lite.private.dns.yaml'), 'utf8')
+const MIHOMO_LITE_PRIVATE_DNS_SNIFFER_TEMPLATE = fs.readFileSync(path.join(__dirname, '../templates/ohyes.mihomo.lite.private.dns.sniffer.yaml'), 'utf8')
+const MIHOMO_LITE_PRIVATE_DNS_SNIFFER_GEO_TEMPLATE = fs.readFileSync(path.join(__dirname, '../templates/ohyes.mihomo.lite.private.dns.sniffer.geo.yaml'), 'utf8')
+const MIHOMO_LITE_PRIVATE_DNS_SNIFFER_GEO_DOH_TEMPLATE = fs.readFileSync(path.join(__dirname, '../templates/ohyes.mihomo.lite.private.dns.sniffer.geo.doh.yaml'), 'utf8')
+const MIHOMO_LITE_PRIVATE_DNS_SNIFFER_GEO_FULLDNS_TEMPLATE = fs.readFileSync(path.join(__dirname, '../templates/ohyes.mihomo.lite.private.dns.sniffer.geo.fulldns.yaml'), 'utf8')
+const MIHOMO_FULL_NOFALLBACK_TEMPLATE = fs.readFileSync(path.join(__dirname, '../templates/ohyes.mihomo.full.nofallback.yaml'), 'utf8')
+const MIHOMO_FULL_STABLE_DNS_TEMPLATE = fs.readFileSync(path.join(__dirname, '../templates/ohyes.mihomo.full.stable-dns.yaml'), 'utf8')
 
 class SubscriptionService {
   constructor() {
@@ -46,12 +59,21 @@ class SubscriptionService {
    * 加载节点配置
    */
   _loadNodesConfig() {
-    const defaultNodes = [
+    const hy2Configured = Boolean(
+      process.env.SUB_HY2_SERVER &&
+      process.env.SUB_HY2_SERVER !== 'example.com' &&
+      process.env.SUB_HY2_SNI &&
+      process.env.SUB_HY2_SNI !== 'example.com' &&
+      process.env.SUB_HY2_PASSWORD &&
+      process.env.SUB_HY2_PASSWORD !== 'CHANGE_ME'
+    )
+
+    return [
       {
         id: 'hysteria2',
         name: 'Hysteria2-Node',
         type: 'hysteria2',
-        enabled: true,
+        enabled: hy2Configured,
         config: {
           server: process.env.SUB_HY2_SERVER || 'example.com',
           port: parseInt(process.env.SUB_HY2_PORT) || 443,
@@ -59,29 +81,8 @@ class SubscriptionService {
           sni: process.env.SUB_HY2_SNI || 'example.com',
           insecure: process.env.SUB_HY2_INSECURE === 'true' ? 1 : 0
         }
-      },
-      {
-        id: 'vless-grpc',
-        name: 'VLESS-gRPC-Node',
-        type: 'vless',
-        enabled: true,
-        config: {
-          server: process.env.SUB_VLESS_SERVER || 'example.com',
-          port: parseInt(process.env.SUB_VLESS_PORT) || 443,
-          uuid: process.env.SUB_VLESS_UUID || '00000000-0000-0000-0000-000000000000',
-          encryption: 'none',
-          security: 'tls',
-          sni: process.env.SUB_VLESS_SNI || 'example.com',
-          alpn: 'h2',
-          fp: 'chrome',
-          type: process.env.SUB_VLESS_TYPE || 'grpc',
-          serviceName: process.env.SUB_VLESS_SERVICE_NAME || 'vless-grpc',
-          mode: process.env.SUB_VLESS_MODE || 'multi'
-        }
       }
     ]
-
-    return defaultNodes
   }
 
   /**
@@ -219,7 +220,7 @@ class SubscriptionService {
    * @param {number} trafficInfo.limit - 流量限制（字节）
    * @param {Date|string} trafficInfo.expiresAt - 过期时间
    */
-  async generateSubscription(token, clientIP = null, userAgent = null, trafficInfo = null) {
+  async generateSubscription(token, clientIP = null, userAgent = null, trafficInfo = null, format = '') {
     // 验证 Token
     const validation = await this.validateToken(token, clientIP)
     if (!validation.valid) {
@@ -239,32 +240,70 @@ class SubscriptionService {
       return true
     })
 
-    // 生成订阅链接
-    const links = []
-
-    // 添加流量信息节点（放在最前面）
-    if (trafficInfo) {
-      const infoLink = this._generateTrafficInfoLink(trafficInfo)
-      if (infoLink) {
-        links.push(infoLink)
-      }
-    }
+    const outputFormat = this._normalizeOutputFormat(format)
 
     // hy2 密码 = URL 中的 token（每个订阅链接独立）
     // 严格模式下旧 token 被 revoke → hy2 认证失败；宽松模式旧 token 保持 active → 认证成功
     const hy2Password = token
-    const vlessUuid = data.vlessUuid
+
+    if (outputFormat === 'mihomo' || outputFormat === 'mihomo-min' || outputFormat === 'mihomo-lite' || outputFormat === 'mihomo-lite-private' || outputFormat === 'mihomo-lite-private-dns' || outputFormat === 'mihomo-lite-private-dns-sniffer' || outputFormat === 'mihomo-lite-private-dns-sniffer-geo' || outputFormat === 'mihomo-lite-private-dns-sniffer-geo-fulldns' || outputFormat === 'mihomo-lite-private-dns-sniffer-geo-doh' || outputFormat === 'mihomo-full-nofallback' || outputFormat === 'mihomo-full-stable-dns') {
+      const primaryNode = nodes.find(node => node.type === 'hysteria2')
+      if (!primaryNode) {
+        return { success: false, error: 'No available hysteria2 node' }
+      }
+
+      let content
+      if (outputFormat === 'mihomo-min') {
+        content = this._generateMinimalMihomoConfig(primaryNode, hy2Password)
+      } else if (outputFormat === 'mihomo-lite') {
+        content = this._generateLiteMihomoConfig(primaryNode, hy2Password)
+      } else if (outputFormat === 'mihomo-lite-private') {
+        content = this._generateLitePrivateMihomoConfig(primaryNode, hy2Password)
+      } else if (outputFormat === 'mihomo-lite-private-dns') {
+        content = this._generateLitePrivateDnsMihomoConfig(primaryNode, hy2Password)
+      } else if (outputFormat === 'mihomo-lite-private-dns-sniffer') {
+        content = this._generateLitePrivateDnsSnifferMihomoConfig(primaryNode, hy2Password)
+      } else if (outputFormat === 'mihomo-lite-private-dns-sniffer-geo') {
+        content = this._generateLitePrivateDnsSnifferGeoMihomoConfig(primaryNode, hy2Password)
+      } else if (outputFormat === 'mihomo-lite-private-dns-sniffer-geo-fulldns') {
+        content = this._generateLitePrivateDnsSnifferGeoFullDnsMihomoConfig(primaryNode, hy2Password)
+      } else if (outputFormat === 'mihomo-lite-private-dns-sniffer-geo-doh') {
+        content = this._generateLitePrivateDnsSnifferGeoDohMihomoConfig(primaryNode, hy2Password)
+      } else if (outputFormat === 'mihomo-full-nofallback') {
+        content = this._generateFullNoFallbackMihomoConfig(primaryNode, hy2Password)
+      } else if (outputFormat === 'mihomo-full-stable-dns') {
+        content = this._generateFullStableDnsMihomoConfig(primaryNode, hy2Password)
+      } else {
+        content = this._generateMihomoConfig(primaryNode, hy2Password)
+      }
+
+      content = this._injectTrafficInfoGroup(content, trafficInfo)
+
+      return {
+        success: true,
+        content,
+        contentType: 'text/yaml; charset=utf-8',
+        fileExtension: 'yaml',
+        outputFormat,
+        nodeCount: nodes.length,
+        userId: data.userId
+      }
+    }
+
+    // 生成订阅链接
+    const links = []
+
+    // 流量信息改由 Subscription-Userinfo 响应头承载，避免在 base64 订阅中插入伪 VLESS 节点
 
     // 添加实际节点
-    links.push(...nodes.map(node => this._generateNodeLink(node, hy2Password, vlessUuid)))
-
-    // Base64 编码
-    const content = Buffer.from(links.join('\n')).toString('base64')
+    links.push(...nodes.map(node => this._generateNodeLink(node, hy2Password)))
 
     return {
       success: true,
-      content,
-      contentType: 'text/plain',
+      content: Buffer.from(links.join('\n')).toString('base64'),
+      contentType: 'text/plain; charset=utf-8',
+      fileExtension: 'txt',
+      outputFormat,
       nodeCount: nodes.length,
       userId: data.userId // 返回关联的用户ID，用于获取流量信息
     }
@@ -275,15 +314,115 @@ class SubscriptionService {
    * @param {object} node - 节点配置
    * @param {string} userToken - 用户的订阅 Token（用作密码）
    */
-  _generateNodeLink(node, userToken = null, vlessUuid = null) {
+  _generateNodeLink(node, userToken = null) {
     switch (node.type) {
       case 'hysteria2':
         return this._generateHysteria2Link(node, userToken)
-      case 'vless':
-        return this._generateVlessLink(node, vlessUuid)
       default:
         return ''
     }
+  }
+
+  _normalizeOutputFormat(format = '') {
+    const normalized = String(format || '').trim().toLowerCase()
+    if (normalized === 'clash-min' || normalized === 'mihomo-min') return 'mihomo-min'
+    if (normalized === 'clash-lite' || normalized === 'mihomo-lite') return 'mihomo-lite'
+    if (normalized === 'clash-lite-private' || normalized === 'mihomo-lite-private') return 'mihomo-lite-private'
+    if (normalized === 'clash-lite-private-dns' || normalized === 'mihomo-lite-private-dns') return 'mihomo-lite-private-dns'
+    if (normalized === 'clash-lite-private-dns-sniffer' || normalized === 'mihomo-lite-private-dns-sniffer') return 'mihomo-lite-private-dns-sniffer'
+    if (normalized === 'clash-lite-private-dns-sniffer-geo' || normalized === 'mihomo-lite-private-dns-sniffer-geo') return 'mihomo-lite-private-dns-sniffer-geo'
+    if (normalized === 'clash-lite-private-dns-sniffer-geo-fulldns' || normalized === 'mihomo-lite-private-dns-sniffer-geo-fulldns') return 'mihomo-lite-private-dns-sniffer-geo-fulldns'
+    if (normalized === 'clash-lite-private-dns-sniffer-geo-doh' || normalized === 'mihomo-lite-private-dns-sniffer-geo-doh') return 'mihomo-lite-private-dns-sniffer-geo-doh'
+    if (normalized === 'clash-full-nofallback' || normalized === 'mihomo-full-nofallback') return 'mihomo-full-nofallback'
+    if (normalized === 'clash-full-stable-dns' || normalized === 'mihomo-full-stable-dns') return 'mihomo-full-stable-dns'
+    if (normalized === 'clash' || normalized === 'mihomo') return 'mihomo-full-stable-dns'
+    return 'base64'
+  }
+
+  _generateMihomoConfig(node, userToken = null) {
+    return this._renderMihomoTemplate(MIHOMO_TEMPLATE, node, userToken)
+  }
+
+  _generateMinimalMihomoConfig(node, userToken = null) {
+    return this._renderMihomoTemplate(MIHOMO_MIN_TEMPLATE, node, userToken)
+  }
+
+  _generateLiteMihomoConfig(node, userToken = null) {
+    return this._renderMihomoTemplate(MIHOMO_LITE_TEMPLATE, node, userToken)
+  }
+
+  _generateLitePrivateMihomoConfig(node, userToken = null) {
+    return this._renderMihomoTemplate(MIHOMO_LITE_PRIVATE_TEMPLATE, node, userToken)
+  }
+
+  _generateLitePrivateDnsMihomoConfig(node, userToken = null) {
+    return this._renderMihomoTemplate(MIHOMO_LITE_PRIVATE_DNS_TEMPLATE, node, userToken)
+  }
+
+  _generateLitePrivateDnsSnifferMihomoConfig(node, userToken = null) {
+    return this._renderMihomoTemplate(MIHOMO_LITE_PRIVATE_DNS_SNIFFER_TEMPLATE, node, userToken)
+  }
+
+  _generateLitePrivateDnsSnifferGeoMihomoConfig(node, userToken = null) {
+    return this._renderMihomoTemplate(MIHOMO_LITE_PRIVATE_DNS_SNIFFER_GEO_TEMPLATE, node, userToken)
+  }
+
+  _generateLitePrivateDnsSnifferGeoFullDnsMihomoConfig(node, userToken = null) {
+    return this._renderMihomoTemplate(MIHOMO_LITE_PRIVATE_DNS_SNIFFER_GEO_FULLDNS_TEMPLATE, node, userToken)
+  }
+
+  _generateLitePrivateDnsSnifferGeoDohMihomoConfig(node, userToken = null) {
+    return this._renderMihomoTemplate(MIHOMO_LITE_PRIVATE_DNS_SNIFFER_GEO_DOH_TEMPLATE, node, userToken)
+  }
+
+  _generateFullNoFallbackMihomoConfig(node, userToken = null) {
+    return this._renderMihomoTemplate(MIHOMO_FULL_NOFALLBACK_TEMPLATE, node, userToken)
+  }
+
+  _generateFullStableDnsMihomoConfig(node, userToken = null) {
+    return this._renderMihomoTemplate(MIHOMO_FULL_STABLE_DNS_TEMPLATE, node, userToken)
+  }
+
+  _renderMihomoTemplate(template, node, userToken = null) {
+    const { config } = node
+    const password = userToken || config.password
+
+    return template
+      .replace(/__HY2_SERVER__/g, config.server)
+      .replace(/__HY2_PORT__/g, String(config.port))
+      .replace(/__HY2_PASSWORD__/g, password)
+      .replace(/__HY2_SNI__/g, config.sni)
+      .replace(/__HY2_SKIP_CERT_VERIFY__/g, config.insecure ? 'true' : 'false')
+  }
+
+  _injectTrafficInfoGroup(content, trafficInfo = null) {
+    if (!trafficInfo || !content.includes('proxy-groups:\n')) {
+      return content
+    }
+
+    const groupName = this._buildTrafficInfoLabel(trafficInfo)
+    const trafficGroup = `  - name: "${groupName}"
+    type: select
+    proxies:
+      - REJECT
+`
+
+    return content.replace('proxy-groups:\n', `proxy-groups:\n${trafficGroup}`)
+  }
+
+  _buildTrafficInfoLabel(trafficInfo) {
+
+    const { used = 0, limit = 0, expiresAt } = trafficInfo
+    const remaining = Math.max(0, limit - used)
+    const remainingStr = this._formatBytes(remaining)
+    const limitStr = this._formatBytes(limit)
+
+    if (!expiresAt) {
+      return `📊 剩余: ${remainingStr} / ${limitStr}`
+    }
+
+    const expireDate = new Date(expiresAt)
+    return `📊 剩余: ${remainingStr} / ${limitStr} | 到期: ${expireDate.getFullYear()}-${String(expireDate.getMonth() + 1).padStart(2, '0')}-${String(expireDate.getDate()).padStart(2, '0')}`
   }
 
   /**
@@ -307,25 +446,6 @@ class SubscriptionService {
   }
 
   /**
-   * 生成 VLESS 链接
-   */
-  _generateVlessLink(node, dynamicUuid = null) {
-    const { config, name } = node
-    const uuid = dynamicUuid || config.uuid
-    const params = new URLSearchParams({
-      encryption: config.encryption,
-      security: config.security,
-      sni: config.sni,
-      alpn: config.alpn || 'h2',
-      fp: config.fp,
-      type: config.type,
-      serviceName: config.serviceName,
-      mode: config.mode
-    })
-    return `vless://${uuid}@${config.server}:${config.port}?${params.toString()}#${encodeURIComponent(name)}`
-  }
-
-  /**
    * 生成流量信息节点链接（不可用节点，仅显示信息）
    * @param {object} trafficInfo - 流量信息
    * @param {number} trafficInfo.used - 已用流量（字节）
@@ -334,34 +454,19 @@ class SubscriptionService {
    */
   _generateTrafficInfoLink(trafficInfo) {
     const { used = 0, limit = 0, expiresAt } = trafficInfo
-
-    // 格式化流量显示
-    const formatBytes = bytes => {
-      if (bytes === 0) return '0 B'
-      const k = 1024
-      const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
-      const i = Math.floor(Math.log(bytes) / Math.log(k))
-      return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
-    }
-
-    // 计算剩余流量
-    const remaining = Math.max(0, limit - used)
-    const remainingStr = formatBytes(remaining)
-    const limitStr = formatBytes(limit)
-
-    // 格式化过期时间
-    let expireStr = ''
-    if (expiresAt) {
-      const expireDate = new Date(expiresAt)
-      expireStr = ` | 到期: ${expireDate.getFullYear()}-${String(expireDate.getMonth() + 1).padStart(2, '0')}-${String(expireDate.getDate()).padStart(2, '0')}`
-    }
-
-    // 生成节点名称
-    const nodeName = `📊 剩余: ${remainingStr} / ${limitStr}${expireStr}`
+    const nodeName = this._buildTrafficInfoLabel({ used, limit, expiresAt })
 
     // 使用无效的 VLESS 链接格式（127.0.0.1:1 不可连接）
     // 这样客户端会显示这个节点但无法连接
     return `vless://00000000-0000-0000-0000-000000000000@127.0.0.1:1?encryption=none&type=tcp#${encodeURIComponent(nodeName)}`
+  }
+
+  _formatBytes(bytes) {
+    if (bytes === 0) return '0 B'
+    const k = 1024
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
   }
 
   /**

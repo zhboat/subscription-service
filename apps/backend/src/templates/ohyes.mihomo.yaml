@@ -1,0 +1,164 @@
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: true
+unified-delay: true
+tcp-concurrent: true
+find-process-mode: strict
+global-client-fingerprint: chrome
+
+profile:
+  store-selected: true
+  store-fake-ip: true
+
+geodata-mode: true
+geox-url:
+  geoip: "https://hy2.ohyes.cc.cd/rules/geoip-lite.dat"
+  geosite: "https://hy2.ohyes.cc.cd/rules/geosite-lite.dat"
+  mmdb: "https://hy2.ohyes.cc.cd/rules/country-lite.mmdb"
+
+dns:
+  enable: true
+  ipv6: true
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - "*.lan"
+    - "*.local"
+    - "*.home.arpa"
+    - "+.msftconnecttest.com"
+    - "+.msftncsi.com"
+    - "pool.ntp.org"
+  default-nameserver:
+    - 223.5.5.5
+    - 1.1.1.1
+  nameserver:
+    - https://223.5.5.5/dns-query
+    - https://1.1.1.1/dns-query
+  fallback:
+    - https://1.0.0.1/dns-query
+    - https://8.8.8.8/dns-query
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+    geosite:
+      - gfw
+      - geolocation-!cn
+
+sniffer:
+  enable: true
+  parse-pure-ip: true
+  sniff:
+    HTTP:
+      ports:
+        - 80
+        - 8080-8880
+      override-destination: true
+    TLS:
+      ports:
+        - 443
+        - 8443
+    QUIC:
+      ports:
+        - 443
+        - 8443
+
+proxies:
+  - name: ohyes
+    type: hysteria2
+    server: __HY2_SERVER__
+    port: __HY2_PORT__
+    password: "__HY2_PASSWORD__"
+    sni: __HY2_SNI__
+    skip-cert-verify: __HY2_SKIP_CERT_VERIFY__
+    alpn:
+      - h3
+    up: "150 Mbps"
+    down: "150 Mbps"
+
+proxy-groups:
+  - name: PROXY
+    type: select
+    proxies:
+      - ohyes
+      - AUTO
+      - DIRECT
+  - name: AUTO
+    type: url-test
+    url: https://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+    proxies:
+      - ohyes
+  - name: Apple
+    type: select
+    proxies:
+      - DIRECT
+      - PROXY
+      - ohyes
+  - name: AdBlock
+    type: select
+    proxies:
+      - REJECT
+      - DIRECT
+  - name: Final
+    type: select
+    proxies:
+      - PROXY
+      - DIRECT
+      - ohyes
+
+rule-providers:
+  private:
+    type: http
+    behavior: domain
+    url: "https://hy2.ohyes.cc.cd/rules/private.txt"
+    path: ./ruleset/loyal_private.yaml
+    interval: 86400
+  reject:
+    type: http
+    behavior: domain
+    url: "https://hy2.ohyes.cc.cd/rules/reject.txt"
+    path: ./ruleset/loyal_reject.yaml
+    interval: 86400
+  direct:
+    type: http
+    behavior: domain
+    url: "https://hy2.ohyes.cc.cd/rules/direct.txt"
+    path: ./ruleset/loyal_direct.yaml
+    interval: 86400
+  apple:
+    type: http
+    behavior: domain
+    url: "https://hy2.ohyes.cc.cd/rules/apple.txt"
+    path: ./ruleset/loyal_apple.yaml
+    interval: 86400
+  proxy:
+    type: http
+    behavior: domain
+    url: "https://hy2.ohyes.cc.cd/rules/proxy.txt"
+    path: ./ruleset/loyal_proxy.yaml
+    interval: 86400
+
+rules:
+  - DOMAIN-SUFFIX,lan,DIRECT
+  - DOMAIN-SUFFIX,local,DIRECT
+  - DOMAIN-SUFFIX,home.arpa,DIRECT
+  - RULE-SET,private,DIRECT
+  - GEOIP,private,DIRECT,no-resolve
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,100.64.0.0/10,DIRECT,no-resolve
+  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,169.254.0.0/16,DIRECT,no-resolve
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - IP-CIDR,224.0.0.0/4,DIRECT,no-resolve
+  - IP-CIDR6,fc00::/7,DIRECT,no-resolve
+  - IP-CIDR6,fe80::/10,DIRECT,no-resolve
+  - RULE-SET,reject,AdBlock
+  - RULE-SET,direct,DIRECT
+  - RULE-SET,apple,Apple
+  - RULE-SET,proxy,PROXY
+  - GEOIP,CN,DIRECT,no-resolve
+  - MATCH,Final

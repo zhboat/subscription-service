@@ -77,6 +77,11 @@ class SubUserService {
       trafficUsed = 0
     } = options
 
+    const normalizedTrafficLimit = Number.isFinite(Number(trafficLimit)) && Number(trafficLimit) >= 0
+      ? Math.floor(Number(trafficLimit))
+      : this.defaultTrafficLimit
+    const normalizedTrafficUsed = Number.isFinite(Number(trafficUsed)) && Number(trafficUsed) >= 0 ? Math.floor(Number(trafficUsed)) : 0
+
     // 检查用户是否已存在
     const existingUser = await this.getUserByUsername(username)
     if (existingUser) {
@@ -108,7 +113,9 @@ class SubUserService {
         parentId,
         subscriptionToken,
         expiresAt,
-        isActive
+        isActive,
+        trafficLimit: normalizedTrafficLimit,
+        trafficUsed: normalizedTrafficUsed
       })
 
       logger.info(`📋 Created subscription user: ${username} (${userId}), role: ${role}`)
@@ -121,7 +128,9 @@ class SubUserService {
           name,
           role,
           parentId,
-          isActive
+          isActive,
+          trafficLimit: normalizedTrafficLimit,
+          trafficUsed: normalizedTrafficUsed
         }
       }
     } catch (error) {
@@ -322,6 +331,10 @@ class SubUserService {
     for (const field of allowedFields) {
       if (updates[field] !== undefined) {
         updateData[field] = updates[field]
+
+        if (field === 'trafficLimit') {
+          updateData[field] = Math.max(0, Math.floor(Number(updates[field]) || 0))
+        }
       }
     }
 
@@ -478,7 +491,7 @@ class SubUserService {
     }
 
     // 使用自定义流量限制或默认值
-    const trafficLimit = options.trafficLimit && options.trafficLimit > 0
+    const trafficLimit = Number.isFinite(Number(options.trafficLimit)) && Number(options.trafficLimit) > 0
       ? options.trafficLimit
       : this.defaultTrafficLimit
 

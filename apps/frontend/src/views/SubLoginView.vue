@@ -22,7 +22,7 @@
               stroke-width="2"
             />
           </svg>
-          <span class="ml-2 text-xl font-bold text-gray-900 dark:text-white">机场订阅</span>
+          <span class="ml-2 text-xl font-bold text-gray-900 dark:text-white">魔法森林</span>
         </div>
         <h2 class="mt-6 text-center text-3xl font-extrabold text-gray-900 dark:text-white">
           用户登录

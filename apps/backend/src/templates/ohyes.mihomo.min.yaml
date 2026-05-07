@@ -1,0 +1,29 @@
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: true
+
+auto-detect-interface: true
+
+proxies:
+  - name: ohyes
+    type: hysteria2
+    server: __HY2_SERVER__
+    port: __HY2_PORT__
+    password: "__HY2_PASSWORD__"
+    sni: __HY2_SNI__
+    skip-cert-verify: __HY2_SKIP_CERT_VERIFY__
+    alpn:
+      - h3
+    up: "150 Mbps"
+    down: "150 Mbps"
+
+proxy-groups:
+  - name: PROXY
+    type: select
+    proxies:
+      - ohyes
+
+rules:
+  - MATCH,PROXY

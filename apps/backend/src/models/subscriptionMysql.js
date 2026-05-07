@@ -629,6 +629,8 @@ class SubscriptionMySQLClient {
 
   _formatUser(row) {
     if (!row) return null
+    const parsedTrafficLimit = row.traffic_limit === null || row.traffic_limit === undefined ? NaN : parseInt(row.traffic_limit, 10)
+    const parsedTrafficUsed = row.traffic_used === null || row.traffic_used === undefined ? NaN : parseInt(row.traffic_used, 10)
     return {
       id: row.id,
       username: row.username,
@@ -642,8 +644,8 @@ class SubscriptionMySQLClient {
       lastLoginAt: row.last_login_at ? row.last_login_at.toISOString() : '',
       createdAt: row.created_at ? row.created_at.toISOString() : '',
       // 流量限制字段
-      trafficLimit: parseInt(row.traffic_limit) || 536870912000, // 默认500GB
-      trafficUsed: parseInt(row.traffic_used) || 0,
+      trafficLimit: Number.isNaN(parsedTrafficLimit) ? 536870912000 : parsedTrafficLimit,
+      trafficUsed: Number.isNaN(parsedTrafficUsed) ? 0 : parsedTrafficUsed,
       trafficResetAt: row.traffic_reset_at ? row.traffic_reset_at.toISOString() : null,
       // 订阅链接模式：strict=严格模式，loose=宽松模式
       tokenMode: row.token_mode || 'strict'

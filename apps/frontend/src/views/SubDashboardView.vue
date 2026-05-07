@@ -29,7 +29,7 @@
               </div>
               <span
                 class="ml-3 bg-gradient-to-r from-blue-600 to-purple-600 bg-clip-text text-xl font-bold text-transparent dark:from-blue-400 dark:to-purple-400"
-                >机场订阅</span
+                >魔法森林</span
               >
             </div>
             <div class="ml-6 hidden sm:ml-10 sm:block">
@@ -268,7 +268,7 @@
               <!-- 通用订阅链接 -->
               <div class="space-y-3">
                 <label class="text-sm font-medium text-gray-700 dark:text-gray-300"
-                  >通用订阅地址</label
+                  >默认订阅地址</label
                 >
                 <div class="flex flex-col gap-2 sm:flex-row">
                   <input
@@ -1191,7 +1191,7 @@ const subscriptionFormats = [
   {
     name: 'Clash',
     type: 'clash',
-    desc: 'Clash/ClashX/CFW',
+    desc: 'Clash/Mihomo 系',
     icon: 'fas fa-bolt',
     iconBg: 'bg-gradient-to-br from-blue-500 to-cyan-500'
   },
@@ -1323,8 +1323,9 @@ const getTrafficPercent = (used, limit) => {
 // 获取格式化的订阅链接
 const getFormatUrl = (type) => {
   if (!subscription.value?.subscriptionUrl) return ''
-  const baseUrl = subscription.value.subscriptionUrl
-  return `${baseUrl}?format=${type}`
+  const url = new URL(subscription.value.subscriptionUrl, window.location.origin)
+  url.searchParams.set('format', type)
+  return url.toString()
 }
 
 // 获取节点类型样式

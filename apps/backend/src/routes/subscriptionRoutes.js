@@ -47,6 +47,41 @@ function buildPublicUrl(req, path) {
   return baseUrl ? `${baseUrl}${normalizedPath}` : normalizedPath
 }
 
+const DEFAULT_SUBSCRIPTION_FORMAT = 'clash'
+
+function buildDefaultSubscriptionPath(tokenOrPath) {
+  const rawPath = String(tokenOrPath || '').trim()
+  if (!rawPath) return ''
+
+  const normalizedPath = rawPath.startsWith('/sub/')
+    ? rawPath
+    : `/sub/${rawPath.replace(/^\/+/, '')}`
+  const [pathname, queryString = ''] = normalizedPath.split('?')
+  const searchParams = new URLSearchParams(queryString)
+  searchParams.set('format', DEFAULT_SUBSCRIPTION_FORMAT)
+  const query = searchParams.toString()
+  return query ? `${pathname}?${query}` : pathname
+}
+
+function buildDefaultSubscriptionUrl(req, tokenOrPath) {
+  const path = buildDefaultSubscriptionPath(tokenOrPath)
+  return path ? buildPublicUrl(req, path) : ''
+}
+
+const DEFAULT_TRAFFIC_LIMIT = 500 * 1024 * 1024 * 1024
+
+function resolveTrafficLimit(user) {
+  const parsed = Number(user?.trafficLimit)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_TRAFFIC_LIMIT
+}
+
+function sanitizeDownloadName(value) {
+  return (String(value || 'subscription')
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'subscription')
+}
+
 /**
  * 订阅用户认证中间件
  */
@@ -259,7 +294,7 @@ router.get('/auth/subscription', authenticateSubUser, async (req, res) => {
     let subscriptionUrl = null
     let tokenStatus = null
     if (user.subscriptionToken) {
-      subscriptionUrl = buildPublicUrl(req, `/sub/${user.subscriptionToken}`)
+      subscriptionUrl = buildDefaultSubscriptionUrl(req, user.subscriptionToken)
       // 获取 Token 状态
       const tokenData = await subscriptionService.getToken(user.subscriptionToken)
       if (tokenData) {
@@ -325,7 +360,7 @@ router.post('/auth/regenerate-token', authenticateSubUser, async (req, res) => {
     res.json({
       success: true,
       data: {
-        subscriptionUrl: buildPublicUrl(req, result.subscribeUrl),
+        subscriptionUrl: buildDefaultSubscriptionUrl(req, result.subscribeUrl),
         token: result.token
       },
       message: '订阅链接已重新生成'
@@ -412,7 +447,7 @@ router.get('/auth/user-traffic', authenticateSubUser, async (req, res) => {
     }
 
     const trafficUsed = user.trafficUsed || 0
-    const trafficLimit = user.trafficLimit || 500 * 1024 * 1024 * 1024
+    const trafficLimit = resolveTrafficLimit(user)
     const remaining = Math.max(0, trafficLimit - trafficUsed)
     const usedPercent = trafficLimit > 0 ? ((trafficUsed / trafficLimit) * 100).toFixed(2) : 0
 
@@ -567,7 +602,7 @@ router.post('/auth/sub-users', authenticateSubAdmin, async (req, res) => {
     })
 
     result.user.subscriptionToken = tokenResult.token
-    result.user.subscriptionUrl = buildPublicUrl(req, tokenResult.subscribeUrl)
+    result.user.subscriptionUrl = buildDefaultSubscriptionUrl(req, tokenResult.subscribeUrl)
     result.user.oneTimeUse = oneTimeUse
 
     logger.info(`📋 Sub admin ${req.subUser.username} created sub user: ${username}`)
@@ -693,7 +728,7 @@ router.post('/auth/sub-users/:userId/regenerate-token', authenticateSubAdmin, as
     res.json({
       success: true,
       data: {
-        subscriptionUrl: buildPublicUrl(req, result.subscribeUrl),
+        subscriptionUrl: buildDefaultSubscriptionUrl(req, result.subscribeUrl),
         token: result.token
       },
       message: '订阅链接已重新生成'
@@ -873,6 +908,7 @@ router.get('/:token', async (req, res) => {
 
     const clientIP = getClientIP(req)
     const userAgent = req.headers['user-agent']
+    const requestedFormat = typeof req.query.format === 'string' ? req.query.format : ''
 
     // 验证 token 格式
     if (!token || token.length < 32) {
@@ -885,14 +921,16 @@ router.get('/:token', async (req, res) => {
 
     // 获取用户流量信息（如果有关联用户）
     let trafficUsed = 0
-    let trafficLimit = 500 * 1024 * 1024 * 1024 // 默认500GB
+    let trafficLimit = DEFAULT_TRAFFIC_LIMIT
     let expireTime = Date.now() + 30 * 24 * 60 * 60 * 1000
+    let downloadName = 'subscription'
 
     if (tokenData && tokenData.userId) {
       const user = await subUserService.getUserById(tokenData.userId)
       if (user) {
         trafficUsed = user.trafficUsed || 0
-        trafficLimit = user.trafficLimit || trafficLimit
+        trafficLimit = resolveTrafficLimit(user)
+        downloadName = sanitizeDownloadName(user.username || user.name || 'subscription')
         if (user.expiresAt) {
           expireTime = new Date(user.expiresAt).getTime()
         }
@@ -906,7 +944,7 @@ router.get('/:token', async (req, res) => {
       expiresAt: new Date(expireTime)
     }
 
-    const result = await subscriptionService.generateSubscription(token, clientIP, userAgent, trafficInfo)
+    const result = await subscriptionService.generateSubscription(token, clientIP, userAgent, trafficInfo, requestedFormat)
 
     if (!result.success) {
       logger.warn(`🚫 Subscription access denied: ${result.error}, IP: ${clientIP}`)
@@ -914,9 +952,18 @@ router.get('/:token', async (req, res) => {
     }
 
     // 设置响应头
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8')
-    res.setHeader('Content-Disposition', 'attachment; filename="subscription.txt"')
+    const isMihomoOutput = result.outputFormat === 'mihomo' || result.outputFormat === 'mihomo-min' || result.outputFormat === 'mihomo-lite' || result.outputFormat === 'mihomo-lite-private' || result.outputFormat === 'mihomo-lite-private-dns' || result.outputFormat === 'mihomo-lite-private-dns-sniffer' || result.outputFormat === 'mihomo-lite-private-dns-sniffer-geo' || result.outputFormat === 'mihomo-lite-private-dns-sniffer-geo-fulldns' || result.outputFormat === 'mihomo-lite-private-dns-sniffer-geo-doh' || result.outputFormat === 'mihomo-full-nofallback' || result.outputFormat === 'mihomo-full-stable-dns'
+    const finalDownloadName = isMihomoOutput ? 'ohyes' : downloadName
+    res.setHeader('Content-Type', result.contentType || 'text/plain; charset=utf-8')
+    const contentDisposition = isMihomoOutput
+      ? `attachment; filename=${finalDownloadName}`
+      : `attachment; filename=${finalDownloadName}.${result.fileExtension || 'txt'}`
+    res.setHeader('Content-Disposition', contentDisposition)
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate')
+    if (isMihomoOutput) {
+      res.setHeader('Profile-Update-Interval', '24')
+      res.setHeader('X-Content-Type-Options', 'nosniff')
+    }
     // 标准机场订阅格式：upload=上传流量; download=下载流量; total=总流量; expire=过期时间戳(秒)
     res.setHeader('Subscription-Userinfo', `upload=0; download=${trafficUsed}; total=${trafficLimit}; expire=${Math.floor(expireTime / 1000)}`)
 
@@ -994,7 +1041,7 @@ router.post('/admin/users', authenticateAdminApiKey, async (req, res) => {
       })
 
       result.user.subscriptionToken = tokenResult.token
-      result.user.subscriptionUrl = buildPublicUrl(req, tokenResult.subscribeUrl)
+      result.user.subscriptionUrl = buildDefaultSubscriptionUrl(req, tokenResult.subscribeUrl)
     }
 
     res.json({
@@ -1096,7 +1143,7 @@ router.post('/admin/users/:userId/regenerate-token', authenticateAdminApiKey, as
     res.json({
       success: true,
       data: {
-        subscriptionUrl: buildPublicUrl(req, result.subscribeUrl),
+        subscriptionUrl: buildDefaultSubscriptionUrl(req, result.subscribeUrl),
         token: result.token
       },
       message: '订阅链接已重新生成'

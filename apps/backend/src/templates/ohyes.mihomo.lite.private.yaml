@@ -1,0 +1,79 @@
+mixed-port: 7890
+allow-lan: false
+mode: rule
+log-level: info
+ipv6: true
+
+auto-detect-interface: true
+
+proxies:
+  - name: ohyes
+    type: hysteria2
+    server: __HY2_SERVER__
+    port: __HY2_PORT__
+    password: "__HY2_PASSWORD__"
+    sni: __HY2_SNI__
+    skip-cert-verify: __HY2_SKIP_CERT_VERIFY__
+    alpn:
+      - h3
+    up: "150 Mbps"
+    down: "150 Mbps"
+
+proxy-groups:
+  - name: PROXY
+    type: select
+    proxies:
+      - ohyes
+      - DIRECT
+
+rule-providers:
+  private:
+    type: http
+    behavior: domain
+    url: "https://hy2.ohyes.cc.cd/rules/private.txt"
+    path: ./ruleset/loyal_private.yaml
+    interval: 86400
+  reject:
+    type: http
+    behavior: domain
+    url: "https://hy2.ohyes.cc.cd/rules/reject.txt"
+    path: ./ruleset/loyal_reject.yaml
+    interval: 86400
+  direct:
+    type: http
+    behavior: domain
+    url: "https://hy2.ohyes.cc.cd/rules/direct.txt"
+    path: ./ruleset/loyal_direct.yaml
+    interval: 86400
+  apple:
+    type: http
+    behavior: domain
+    url: "https://hy2.ohyes.cc.cd/rules/apple.txt"
+    path: ./ruleset/loyal_apple.yaml
+    interval: 86400
+  proxy:
+    type: http
+    behavior: domain
+    url: "https://hy2.ohyes.cc.cd/rules/proxy.txt"
+    path: ./ruleset/loyal_proxy.yaml
+    interval: 86400
+
+rules:
+  - DOMAIN-SUFFIX,lan,DIRECT
+  - DOMAIN-SUFFIX,local,DIRECT
+  - DOMAIN-SUFFIX,home.arpa,DIRECT
+  - RULE-SET,private,DIRECT
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,100.64.0.0/10,DIRECT,no-resolve
+  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,169.254.0.0/16,DIRECT,no-resolve
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - IP-CIDR,224.0.0.0/4,DIRECT,no-resolve
+  - IP-CIDR6,fc00::/7,DIRECT,no-resolve
+  - IP-CIDR6,fe80::/10,DIRECT,no-resolve
+  - RULE-SET,reject,REJECT
+  - RULE-SET,direct,DIRECT
+  - RULE-SET,apple,DIRECT
+  - RULE-SET,proxy,PROXY
+  - MATCH,PROXY
