@@ -3,7 +3,7 @@
  * 定时从 Hysteria2 获取用户流量统计并更新到数据库
  */
 
-const subscriptionMysql = require('../models/subscriptionMysql')
+const subscriptionStore = require('../models/subscriptionStore')
 const logger = require('../utils/logger')
 const { fetchHy2Traffic } = require('../utils/hy2StatsClient')
 
@@ -125,7 +125,7 @@ class TrafficSyncService {
     let updateCount = 0
 
     try {
-      await subscriptionMysql.connect()
+      await subscriptionStore.connect()
 
       for (const [userId, stats] of Object.entries(usersStats)) {
         // 跳过默认用户（兼容旧配置）
@@ -146,10 +146,10 @@ class TrafficSyncService {
 
         try {
           // 更新用户流量
-          await subscriptionMysql.updateTrafficUsed(userId, totalBytes)
+          await subscriptionStore.updateTrafficUsed(userId, totalBytes)
 
           // 记录详细统计
-          await subscriptionMysql.recordUserStats(userId, {
+          await subscriptionStore.recordUserStats(userId, {
             uploadBytes,
             downloadBytes
           })

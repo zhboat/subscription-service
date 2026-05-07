@@ -6,8 +6,9 @@
 ## 管理员接口返回 401/403
 检查 `.env` 里的 `SUB_ADMIN_API_KEY`，并确认请求头带了正确的 Key。
 
-## MySQL 连接失败
-确认 `MYSQL_*` 配置正确，且容器状态正常。
+## 数据库连接失败
+使用 MySQL 时确认 `SUB_DB_CLIENT=mysql` 和 `MYSQL_*` 配置正确。
+使用 PostgreSQL 时确认 `SUB_DB_CLIENT=postgres` 和 `POSTGRES_*` 或 `DATABASE_URL` 配置正确。
 
 ## Hysteria2 统计不可用
 检查 `HY2_STATS_URL` 与 `HY2_STATS_SECRET`，或设置 `TRAFFIC_SYNC_ENABLED=false` 禁用。

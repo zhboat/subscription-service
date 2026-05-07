@@ -79,11 +79,19 @@ nano .env
 - `SUB_ADMIN_API_KEY` - 管理员 API 密钥
 - `MYSQL_PASSWORD` - MySQL 用户密码
 - `MYSQL_ROOT_PASSWORD` - MySQL root 密码
+- `POSTGRES_PASSWORD` - PostgreSQL 用户密码（仅 `SUB_DB_CLIENT=postgres` 时必需）
 
 ### 4. 启动服务
 
 ```bash
+# 使用外部数据库，或只启动 backend
 docker compose -f deploy/compose/docker-compose.yml --env-file .env up -d --build
+
+# 使用内置 MySQL
+docker compose --profile mysql -f deploy/compose/docker-compose.yml --env-file .env up -d --build
+
+# 使用内置 PostgreSQL
+docker compose --profile postgres -f deploy/compose/docker-compose.yml --env-file .env up -d --build
 ```
 
 ### 5. 验证安装
@@ -95,6 +103,37 @@ docker compose -f deploy/compose/docker-compose.yml ps
 # 检查后端健康状态
 curl http://localhost:18080/sub/health
 ```
+
+## 从 MySQL 迁移到 PostgreSQL
+
+如果当前生产环境已经在使用 MySQL，可以用仓库内置脚本完成备份、建 PostgreSQL 库和用户、写入 `.env`、构建镜像、停写迁移、重启后端：
+
+```bash
+bash scripts/migrate-production-postgres.sh
+```
+
+脚本默认读取仓库根目录 `.env` 和 `deploy/compose/docker-compose.yml`。它会：
+1. 备份当前 `.env` 到 `backups/`
+2. 检测正在运行的 MySQL 和 PostgreSQL 容器
+3. 在 PostgreSQL 中创建独立的 `subscription` 数据库和角色
+4. 将 `.env` 切换为 `SUB_DB_CLIENT=postgres`
+5. 停止后端以冻结 MySQL 写入
+6. 备份 MySQL `subscription` 数据库
+7. 运行 `npm run migrate:mysql-to-postgres`
+8. 启动后端并输出源库/目标库行数
+
+在 1Panel 外部 PostgreSQL 容器上部署时，后端容器需要和 PostgreSQL 容器处在同一个 Docker 网络中，并使用该网络内的 DNS 别名，例如：
+
+```bash
+SUB_DB_CLIENT=postgres
+POSTGRES_HOST=postgresql
+POSTGRES_PORT=5432
+POSTGRES_DATABASE=subscription
+POSTGRES_USER=subscription
+POSTGRES_SSL=false
+```
+
+不要让本服务复用其他应用的 PostgreSQL 数据库。建议保留 MySQL 容器一段观察期，确认订阅、登录、认证和流量同步都正常后再下线。
 
 ## 自定义端口
 
@@ -229,16 +268,24 @@ docker compose -f deploy/compose/docker-compose.yml logs -f backend
 
 ## 数据备份
 
-MySQL 数据存储在 Docker volume 中。备份方法：
+MySQL/PostgreSQL 数据存储在 Docker volume 中。备份方法：
 
 ```bash
-# 备份数据库
+# 备份 MySQL 数据库
 docker compose -f deploy/compose/docker-compose.yml exec mysql \
   mysqldump -u root -p subscription > backup.sql
 
-# 恢复数据库
+# 恢复 MySQL 数据库
 docker compose -f deploy/compose/docker-compose.yml exec -T mysql \
   mysql -u root -p subscription < backup.sql
+
+# 备份 PostgreSQL 数据库
+docker compose -f deploy/compose/docker-compose.yml exec postgres \
+  pg_dump -U subscription subscription > backup.sql
+
+# 恢复 PostgreSQL 数据库
+docker compose -f deploy/compose/docker-compose.yml exec -T postgres \
+  psql -U subscription subscription < backup.sql
 ```
 
 ## 卸载

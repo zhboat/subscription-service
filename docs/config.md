@@ -12,13 +12,31 @@ Edit `.env` in the repo root. Below are the main settings.
 ## Admin API
 - `SUB_ADMIN_API_KEY`: required for `/sub/admin/*`
 
-## MySQL
+## Database
+- `SUB_DB_CLIENT`: `mysql` or `postgres` (default `mysql`)
+
+MySQL:
 - `MYSQL_HOST`
 - `MYSQL_PORT`
 - `MYSQL_DATABASE`
 - `MYSQL_USER`
 - `MYSQL_PASSWORD`
 - `MYSQL_ROOT_PASSWORD`
+
+PostgreSQL:
+- `POSTGRES_HOST`
+- `POSTGRES_PORT`
+- `POSTGRES_DATABASE`
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
+- `POSTGRES_SSL`
+- `DATABASE_URL` / `POSTGRES_URL` / `SUB_POSTGRES_URL` can be used instead of host fields.
+
+To migrate existing MySQL data:
+```bash
+cd apps/backend
+npm run migrate:mysql-to-postgres
+```
 
 ## Redis
 - `REDIS_HOST`

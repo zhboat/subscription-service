@@ -43,6 +43,12 @@ SUB_PUBLIC_BASE_URL=http://1.2.3.4:18080
 
 > 安装脚本会自动生成 64 字符的随机密钥。请妥善保管，不要泄露。
 
+### 数据库
+
+| 变量 | 说明 | 默认值 | 必填 |
+|------|------|--------|------|
+| `SUB_DB_CLIENT` | 数据库客户端，可选 `mysql` 或 `postgres` | `mysql` | 否 |
+
 ### MySQL 数据库
 
 | 变量 | 说明 | 默认值 | 必填 |
@@ -55,6 +61,30 @@ SUB_PUBLIC_BASE_URL=http://1.2.3.4:18080
 | `MYSQL_ROOT_PASSWORD` | MySQL root 密码 | 自动生成 | **是** |
 
 > 使用 Docker Compose 部署时，`MYSQL_HOST` 应设为 `mysql`（容器名）。
+
+### PostgreSQL 数据库
+
+| 变量 | 说明 | 默认值 | 必填 |
+|------|------|--------|------|
+| `POSTGRES_HOST` | PostgreSQL 主机地址 | `postgres` | 使用 PostgreSQL 时是 |
+| `POSTGRES_PORT` | PostgreSQL 端口 | `5432` | 否 |
+| `POSTGRES_DATABASE` | 数据库名称 | `subscription` | 使用 PostgreSQL 时是 |
+| `POSTGRES_USER` | 数据库用户名 | `subscription` | 使用 PostgreSQL 时是 |
+| `POSTGRES_PASSWORD` | 数据库密码 | 自动生成 | 使用 PostgreSQL 时是 |
+| `POSTGRES_SSL` | 是否启用 SSL 连接 | `false` | 否 |
+
+也可以使用 `DATABASE_URL`、`POSTGRES_URL` 或 `SUB_POSTGRES_URL` 配置完整连接串。使用 PostgreSQL 时设置：
+
+```bash
+SUB_DB_CLIENT=postgres
+```
+
+从 MySQL 迁移已有数据：
+
+```bash
+cd apps/backend
+npm run migrate:mysql-to-postgres
+```
 
 ### Redis 缓存
 
@@ -217,6 +247,9 @@ SUB_PUBLIC_BASE_URL=https://sub.example.com
 # 管理员 API Key
 SUB_ADMIN_API_KEY=your-64-char-random-key
 
+# Database
+SUB_DB_CLIENT=mysql
+
 # MySQL
 MYSQL_HOST=mysql
 MYSQL_PORT=3306
@@ -224,6 +257,14 @@ MYSQL_DATABASE=subscription
 MYSQL_USER=subscription
 MYSQL_PASSWORD=your-mysql-password
 MYSQL_ROOT_PASSWORD=your-mysql-root-password
+
+# PostgreSQL
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
+POSTGRES_DATABASE=subscription
+POSTGRES_USER=subscription
+POSTGRES_PASSWORD=your-postgres-password
+POSTGRES_SSL=false
 
 # Redis
 REDIS_HOST=redis

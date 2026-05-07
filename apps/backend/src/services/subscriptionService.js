@@ -1,13 +1,13 @@
 /**
  * 订阅服务 - 安全的动态订阅链接管理
  * 支持 Token 验证、过期时间、访问限制等安全特性
- * 数据存储：MySQL（持久化）
+ * 数据存储：store（持久化）
  */
 
 const fs = require('fs')
 const path = require('path')
 const crypto = require('crypto')
-const subscriptionMysql = require('../models/subscriptionMysql')
+const subscriptionStore = require('../models/subscriptionStore')
 const xrayService = require('./xrayService')
 const logger = require('../utils/logger')
 
@@ -28,30 +28,30 @@ class SubscriptionService {
   constructor() {
     // 节点配置 - 从环境变量或默认值加载
     this.nodes = this._loadNodesConfig()
-    this.mysqlReady = false
+    this.storeReady = false
   }
 
   /**
-   * 初始化 MySQL 连接
+   * 初始化 store 连接
    */
-  async initMySQL() {
-    if (this.mysqlReady) return
+  async initStore() {
+    if (this.storeReady) return
     try {
-      await subscriptionMysql.connect()
-      this.mysqlReady = true
-      logger.info('✅ SubscriptionService MySQL initialized')
+      await subscriptionStore.connect()
+      this.storeReady = true
+      logger.info('✅ SubscriptionService store initialized')
     } catch (error) {
-      logger.error('❌ SubscriptionService MySQL init failed:', error)
+      logger.error('❌ SubscriptionService store init failed:', error)
       throw error
     }
   }
 
   /**
-   * 确保 MySQL 已连接
+   * 确保 store 已连接
    */
-  async ensureMySQL() {
-    if (!this.mysqlReady) {
-      await this.initMySQL()
+  async ensureStore() {
+    if (!this.storeReady) {
+      await this.initStore()
     }
   }
 
@@ -96,7 +96,7 @@ class SubscriptionService {
    * 创建订阅 Token
    */
   async createSubscriptionToken(options = {}) {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
     const {
       name = '默认订阅',
@@ -116,7 +116,7 @@ class SubscriptionService {
     const vlessUuid = crypto.randomUUID()
 
     try {
-      await subscriptionMysql.createToken({
+      await subscriptionStore.createToken({
         id: tokenId,
         token,
         name,
@@ -155,9 +155,9 @@ class SubscriptionService {
    * 验证订阅 Token
    */
   async validateToken(token, clientIP = null) {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
-    const data = await subscriptionMysql.getToken(token)
+    const data = await subscriptionStore.getToken(token)
 
     if (!data || !data.token) {
       return { valid: false, error: 'Token not found or expired' }
@@ -200,12 +200,12 @@ class SubscriptionService {
    * 记录访问并更新统计
    */
   async recordAccess(token, clientIP, userAgent, tokenData = null) {
-    await this.ensureMySQL()
-    await subscriptionMysql.incrementTokenAccess(token, clientIP || 'unknown', userAgent || 'unknown')
+    await this.ensureStore()
+    await subscriptionStore.incrementTokenAccess(token, clientIP || 'unknown', userAgent || 'unknown')
 
     // 如果是一次性链接，标记为已消费
     if (tokenData && tokenData.oneTimeUse && !tokenData.isConsumed) {
-      await subscriptionMysql.markTokenConsumed(token)
+      await subscriptionStore.markTokenConsumed(token)
       logger.info(`🔒 One-time token consumed: ${token.substring(0, 8)}...`)
     }
   }
@@ -473,9 +473,9 @@ class SubscriptionService {
    * 获取所有订阅 Token 列表
    */
   async listTokens() {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
-    const tokens = await subscriptionMysql.listTokens()
+    const tokens = await subscriptionStore.listTokens()
     return tokens.map(token => ({
       id: token.id,
       name: token.name,
@@ -494,22 +494,22 @@ class SubscriptionService {
    * 获取单个 Token 详情
    */
   async getToken(token) {
-    await this.ensureMySQL()
-    return subscriptionMysql.getToken(token)
+    await this.ensureStore()
+    return subscriptionStore.getToken(token)
   }
 
   /**
    * 更新 Token 状态
    */
   async updateTokenStatus(token, status) {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
-    const exists = await subscriptionMysql.getToken(token)
+    const exists = await subscriptionStore.getToken(token)
     if (!exists) {
       return { success: false, error: 'Token not found' }
     }
 
-    await subscriptionMysql.updateToken(token, { status })
+    await subscriptionStore.updateToken(token, { status })
     logger.info(`📋 Updated subscription token status: ${token.substring(0, 8)} -> ${status}`)
 
     return { success: true }
@@ -519,11 +519,11 @@ class SubscriptionService {
    * 删除 Token
    */
   async deleteToken(token) {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
     // 先获取 token 数据（用于删除 Xray 用户）
-    const tokenData = await subscriptionMysql.getToken(token)
-    const deleted = await subscriptionMysql.deleteToken(token)
+    const tokenData = await subscriptionStore.getToken(token)
+    const deleted = await subscriptionStore.deleteToken(token)
 
     if (deleted) {
       // 异步删除 Xray 用户
@@ -546,9 +546,9 @@ class SubscriptionService {
    * - loose: 宽松模式，新旧链接并存
    */
   async regenerateToken(oldToken, tokenMode = 'strict') {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
-    const tokenData = await subscriptionMysql.getToken(oldToken)
+    const tokenData = await subscriptionStore.getToken(oldToken)
     if (!tokenData) {
       return { success: false, error: 'Token not found' }
     }
@@ -563,10 +563,10 @@ class SubscriptionService {
     // 严格模式：获取将被 revoke 的旧 token，用于删除 Xray 用户
     let revokedTokens = []
     if (strictMode && tokenData.userId) {
-      revokedTokens = await subscriptionMysql.getTokensByUserIdAndStatus(tokenData.userId, 'active')
+      revokedTokens = await subscriptionStore.getTokensByUserIdAndStatus(tokenData.userId, 'active')
     }
 
-    const created = await subscriptionMysql.regenerateToken(oldToken, newToken, strictMode, newVlessUuid)
+    const created = await subscriptionStore.regenerateToken(oldToken, newToken, strictMode, newVlessUuid)
     if (!created) {
       return { success: false, error: 'Failed to create new token' }
     }
@@ -602,10 +602,10 @@ class SubscriptionService {
    * 为用户重新生成订阅链接
    */
   async regenerateUserToken(userId, tokenMode = 'strict') {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
     // 获取用户关联的 Token
-    const tokenData = await subscriptionMysql.getTokenByUserId(userId)
+    const tokenData = await subscriptionStore.getTokenByUserId(userId)
     if (!tokenData) {
       return { success: false, error: '未找到关联的订阅链接' }
     }
@@ -645,25 +645,25 @@ class SubscriptionService {
    * 获取用户统计信息
    */
   async getUserStats(userId) {
-    await this.ensureMySQL()
-    return subscriptionMysql.getUserStats(userId)
+    await this.ensureStore()
+    return subscriptionStore.getUserStats(userId)
   }
 
   /**
    * 记录用户使用统计
    */
   async recordUserStats(userId, stats = {}) {
-    await this.ensureMySQL()
-    await subscriptionMysql.recordUserStats(userId, stats)
+    await this.ensureStore()
+    await subscriptionStore.recordUserStats(userId, stats)
   }
 
   /**
    * 获取系统概览统计
    */
   async getSystemStats() {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
-    const stats = await subscriptionMysql.getSystemStats()
+    const stats = await subscriptionStore.getSystemStats()
     return {
       ...stats,
       nodeCount: this.nodes.filter(n => n.enabled).length

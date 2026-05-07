@@ -4,7 +4,7 @@
  */
 
 const express = require('express')
-const subscriptionMysql = require('../models/subscriptionMysql')
+const subscriptionStore = require('../models/subscriptionStore')
 const logger = require('../utils/logger')
 
 // 认证服务配置
@@ -98,11 +98,11 @@ class Hysteria2AuthService {
    */
   async validateUser(userId, password) {
     try {
-      await subscriptionMysql.connect()
+      await subscriptionStore.connect()
 
       // 1. 如果提供了 userId，验证用户密码
       if (userId) {
-        const user = await subscriptionMysql.getUserById(userId)
+        const user = await subscriptionStore.getUserById(userId)
         if (user && user.isActive === 'true') {
           // 这里简化处理，实际应该验证密码
           // 但为了兼容性，我们允许使用订阅Token作为密码
@@ -113,7 +113,7 @@ class Hysteria2AuthService {
       }
 
       // 2. 尝试用 password 作为 subscription_token 直接查找用户
-      const userByToken = await subscriptionMysql.getUserBySubscriptionToken(password)
+      const userByToken = await subscriptionStore.getUserBySubscriptionToken(password)
       if (userByToken && userByToken.isActive === 'true') {
         // 检查用户是否过期
         if (userByToken.expiresAt) {
@@ -130,7 +130,7 @@ class Hysteria2AuthService {
       }
 
       // 3. 尝试用 password 作为订阅Token查找用户（sub_tokens表）
-      const tokenData = await subscriptionMysql.getToken(password)
+      const tokenData = await subscriptionStore.getToken(password)
       if (tokenData && tokenData.status === 'active') {
         // 检查Token是否过期
         if (tokenData.expiresAt) {
@@ -146,7 +146,7 @@ class Hysteria2AuthService {
 
         // 如果有关联用户，验证用户状态和流量
         if (tokenData.userId) {
-          const user = await subscriptionMysql.getUserById(tokenData.userId)
+          const user = await subscriptionStore.getUserById(tokenData.userId)
           if (user && user.isActive === 'true') {
             // 检查用户流量是否用尽
             if (user.trafficUsed >= user.trafficLimit) {

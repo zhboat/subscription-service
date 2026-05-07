@@ -1,13 +1,13 @@
 /**
  * 订阅用户服务 - 后端认证
  * 支持用户管理、密码加密、会话管理
- * 数据存储：MySQL（持久化） + Redis（会话缓存）
+ * 数据存储：store（持久化） + Redis（会话缓存）
  */
 
 const crypto = require('crypto')
 const bcrypt = require('bcryptjs')
 const redis = require('../models/redis')
-const subscriptionMysql = require('../models/subscriptionMysql')
+const subscriptionStore = require('../models/subscriptionStore')
 const subscriptionService = require('./subscriptionService')
 const logger = require('../utils/logger')
 
@@ -23,33 +23,33 @@ const TOTAL_TRAFFIC_LIMIT = 10 * 1024 * 1024 * 1024 * 1024 // 10TB total
 class SubUserService {
   constructor() {
     this.saltRounds = 10
-    this.mysqlReady = false
+    this.storeReady = false
     this.maxSubUsers = MAX_SUB_USERS
     this.defaultTrafficLimit = DEFAULT_TRAFFIC_LIMIT
     this.totalTrafficLimit = TOTAL_TRAFFIC_LIMIT
   }
 
   /**
-   * 初始化 MySQL 连接
+   * 初始化 store 连接
    */
-  async initMySQL() {
-    if (this.mysqlReady) return
+  async initStore() {
+    if (this.storeReady) return
     try {
-      await subscriptionMysql.connect()
-      this.mysqlReady = true
-      logger.info('✅ SubUserService MySQL initialized')
+      await subscriptionStore.connect()
+      this.storeReady = true
+      logger.info('✅ SubUserService store initialized')
     } catch (error) {
-      logger.error('❌ SubUserService MySQL init failed:', error)
+      logger.error('❌ SubUserService store init failed:', error)
       throw error
     }
   }
 
   /**
-   * 确保 MySQL 已连接
+   * 确保 store 已连接
    */
-  async ensureMySQL() {
-    if (!this.mysqlReady) {
-      await this.initMySQL()
+  async ensureStore() {
+    if (!this.storeReady) {
+      await this.initStore()
     }
   }
 
@@ -64,7 +64,7 @@ class SubUserService {
    * 创建订阅用户
    */
   async createUser(username, password, options = {}) {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
     const {
       name = username,
@@ -104,7 +104,7 @@ class SubUserService {
     const userId = crypto.randomBytes(8).toString('hex')
 
     try {
-      await subscriptionMysql.createUser({
+      await subscriptionStore.createUser({
         id: userId,
         username,
         passwordHash,
@@ -143,23 +143,23 @@ class SubUserService {
    * 通过用户名获取用户
    */
   async getUserByUsername(username) {
-    await this.ensureMySQL()
-    return subscriptionMysql.getUserByUsername(username)
+    await this.ensureStore()
+    return subscriptionStore.getUserByUsername(username)
   }
 
   /**
    * 通过ID获取用户
    */
   async getUserById(userId) {
-    await this.ensureMySQL()
-    return subscriptionMysql.getUserById(userId)
+    await this.ensureStore()
+    return subscriptionStore.getUserById(userId)
   }
 
   /**
    * 用户登录验证
    */
   async login(username, password) {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
     const user = await this.getUserByUsername(username)
 
@@ -199,7 +199,7 @@ class SubUserService {
     )
 
     // 更新最后登录时间
-    await subscriptionMysql.updateUser(user.id, {
+    await subscriptionStore.updateUser(user.id, {
       lastLoginAt: new Date()
     })
 
@@ -232,7 +232,7 @@ class SubUserService {
     }
 
     try {
-      await this.ensureMySQL()
+      await this.ensureStore()
       const session = JSON.parse(sessionData)
       const user = await this.getUserById(session.userId)
 
@@ -275,7 +275,7 @@ class SubUserService {
    * 修改密码
    */
   async changePassword(userId, oldPassword, newPassword) {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
     const user = await this.getUserById(userId)
     if (!user) {
@@ -288,7 +288,7 @@ class SubUserService {
     }
 
     const newPasswordHash = await bcrypt.hash(newPassword, this.saltRounds)
-    await subscriptionMysql.updateUser(userId, { passwordHash: newPasswordHash })
+    await subscriptionStore.updateUser(userId, { passwordHash: newPasswordHash })
 
     logger.info(`🔑 Password changed for subscription user: ${user.username}`)
 
@@ -299,7 +299,7 @@ class SubUserService {
    * 管理员重置密码
    */
   async resetPassword(userId, newPassword) {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
     const user = await this.getUserById(userId)
     if (!user) {
@@ -307,7 +307,7 @@ class SubUserService {
     }
 
     const newPasswordHash = await bcrypt.hash(newPassword, this.saltRounds)
-    await subscriptionMysql.updateUser(userId, { passwordHash: newPasswordHash })
+    await subscriptionStore.updateUser(userId, { passwordHash: newPasswordHash })
 
     logger.info(`🔑 Password reset for subscription user: ${user.username}`)
 
@@ -318,7 +318,7 @@ class SubUserService {
    * 更新用户信息
    */
   async updateUser(userId, updates) {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
     const user = await this.getUserById(userId)
     if (!user) {
@@ -339,7 +339,7 @@ class SubUserService {
     }
 
     if (Object.keys(updateData).length > 0) {
-      await subscriptionMysql.updateUser(userId, updateData)
+      await subscriptionStore.updateUser(userId, updateData)
     }
 
     logger.info(`📝 Updated subscription user: ${user.username}`)
@@ -351,7 +351,7 @@ class SubUserService {
    * 设置用户角色
    */
   async setUserRole(userId, role) {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
     if (!['admin', 'user'].includes(role)) {
       return { success: false, error: '无效的角色' }
@@ -362,7 +362,7 @@ class SubUserService {
       return { success: false, error: '用户不存在' }
     }
 
-    await subscriptionMysql.updateUser(userId, { role })
+    await subscriptionStore.updateUser(userId, { role })
     logger.info(`👤 Set user role: ${user.username} -> ${role}`)
 
     return { success: true }
@@ -372,8 +372,8 @@ class SubUserService {
    * 获取下级用户列表
    */
   async getSubUsers(parentId) {
-    await this.ensureMySQL()
-    const users = await subscriptionMysql.getSubUsers(parentId)
+    await this.ensureStore()
+    const users = await subscriptionStore.getSubUsers(parentId)
     return users.map(user => ({
       id: user.id,
       username: user.username,
@@ -395,10 +395,10 @@ class SubUserService {
    * 获取管理员的下级用户统计信息
    */
   async getSubUserStats(adminId) {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
-    const subUserCount = await subscriptionMysql.getSubUserCount(adminId)
-    const trafficStats = await subscriptionMysql.getSubUsersTotalTraffic(adminId)
+    const subUserCount = await subscriptionStore.getSubUserCount(adminId)
+    const trafficStats = await subscriptionStore.getSubUsersTotalTraffic(adminId)
 
     return {
       subUserCount,
@@ -414,7 +414,7 @@ class SubUserService {
    * 更新用户流量使用量
    */
   async updateTrafficUsed(userId, bytesUsed) {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
     const user = await this.getUserById(userId)
     if (!user) {
@@ -426,7 +426,7 @@ class SubUserService {
       return { success: false, error: '流量已用尽' }
     }
 
-    await subscriptionMysql.updateTrafficUsed(userId, bytesUsed)
+    await subscriptionStore.updateTrafficUsed(userId, bytesUsed)
     logger.info(`📊 Updated traffic for user ${user.username}: +${bytesUsed} bytes`)
 
     return { success: true }
@@ -436,14 +436,14 @@ class SubUserService {
    * 重置用户流量
    */
   async resetTraffic(userId) {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
     const user = await this.getUserById(userId)
     if (!user) {
       return { success: false, error: '用户不存在' }
     }
 
-    await subscriptionMysql.resetTraffic(userId)
+    await subscriptionStore.resetTraffic(userId)
     logger.info(`🔄 Reset traffic for user ${user.username}`)
 
     return { success: true }
@@ -453,7 +453,7 @@ class SubUserService {
    * 检查用户流量是否可用
    */
   async checkTrafficAvailable(userId) {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
     const user = await this.getUserById(userId)
     if (!user) {
@@ -476,7 +476,7 @@ class SubUserService {
    * 管理员创建下级用户（带自动生成订阅链接）
    */
   async createSubUser(adminId, username, password, options = {}) {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
     // 验证管理员权限
     const admin = await this.getUserById(adminId)
@@ -485,7 +485,7 @@ class SubUserService {
     }
 
     // 检查下级用户数量限制
-    const subUserCount = await subscriptionMysql.getSubUserCount(adminId)
+    const subUserCount = await subscriptionStore.getSubUserCount(adminId)
     if (subUserCount >= this.maxSubUsers) {
       return { success: false, error: `已达到下级用户数量上限（最多${this.maxSubUsers}个）` }
     }
@@ -511,14 +511,14 @@ class SubUserService {
    * 删除用户
    */
   async deleteUser(userId) {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
     const user = await this.getUserById(userId)
     if (!user) {
       return { success: false, error: '用户不存在' }
     }
 
-    await subscriptionMysql.deleteUser(userId)
+    await subscriptionStore.deleteUser(userId)
 
     logger.info(`🗑️ Deleted subscription user: ${user.username}`)
 
@@ -529,9 +529,9 @@ class SubUserService {
    * 获取所有用户列表
    */
   async listUsers() {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
-    const users = await subscriptionMysql.listUsers()
+    const users = await subscriptionStore.listUsers()
     return users.map(user => ({
       id: user.id,
       username: user.username,
@@ -550,7 +550,7 @@ class SubUserService {
    * 确保用户有可用的订阅 Token
    */
   async ensureUserSubscriptionToken(user, createdBy = 'system') {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
     if (!user || !user.id) {
       return { success: false, error: '用户不存在' }
@@ -586,7 +586,7 @@ class SubUserService {
    * 初始化默认管理员账号
    */
   async initDefaultAdmin() {
-    await this.ensureMySQL()
+    await this.ensureStore()
 
     let adminUser = await this.getUserByUsername('admin')
     let defaultPassword = null

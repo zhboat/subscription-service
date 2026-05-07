@@ -9,7 +9,7 @@ const fs = require('fs')
 const path = require('path')
 const os = require('os')
 const logger = require('../utils/logger')
-const subscriptionMysql = require('../models/subscriptionMysql')
+const subscriptionStore = require('../models/subscriptionStore')
 
 const execFileAsync = promisify(execFile)
 
@@ -75,12 +75,14 @@ class XrayService {
     }
 
     try {
-      const backfilled = await subscriptionMysql.backfillVlessUuids()
+      await subscriptionStore.connect()
+
+      const backfilled = await subscriptionStore.backfillVlessUuids()
       if (backfilled > 0) {
         logger.info(`🔧 Backfilled ${backfilled} tokens with vless_uuid`)
       }
 
-      const tokens = await subscriptionMysql.getActiveTokensWithUuid()
+      const tokens = await subscriptionStore.getActiveTokensWithUuid()
       let added = 0
       let failed = 0
 
